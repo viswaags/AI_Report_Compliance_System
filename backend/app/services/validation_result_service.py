@@ -33,15 +33,23 @@ class ValidationResultService:
         db,
         report_version_id,
         compliance_score,
-        issues
+        issues,
+        findings=None
     ):
+
+        issues_payload = {
+            "findings": ValidationResultService._normalize_issues(
+                findings if findings is not None else issues
+            ),
+            "issues": ValidationResultService._normalize_issues(
+                issues
+            )
+        }
 
         validation_result = ValidationResult(
             report_version_id=report_version_id,
             compliance_score=compliance_score,
-            issues_json=ValidationResultService._normalize_issues(
-                issues
-            )
+            issues_json=issues_payload
         )
 
         db.add(validation_result)

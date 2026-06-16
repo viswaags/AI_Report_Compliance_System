@@ -1,52 +1,34 @@
 import json
 
-from app.ai.openrouter_client import OpenRouterClient
+from app.ai.gemini_client import GeminiClient
 
 
 class FeedbackAgent:
 
     def __init__(self):
-
-        self.client = OpenRouterClient()
+        self.client = GeminiClient()
 
     def generate_feedback(
         self,
         issues_json,
         compliance_score
     ):
-
         prompt = f"""
 You are an institutional report compliance reviewer.
+
+Use only the supplied compliance issues. Do not add requirements that are not present.
 
 Compliance Score:
 {compliance_score}
 
-Issues:
+Issues JSON:
 {json.dumps(issues_json, indent=2)}
 
-Generate professional correction guidance.
-
-Explain:
+Generate professional correction guidance that explains:
 1. What is wrong.
-2. What should be corrected.
-3. How to improve compliance.
+2. Why each issue failed.
+3. How the report author should correct it.
 
-Keep response professional.
+Keep the response concise, formal, and actionable.
 """
-        return """
-The uploaded report does not comply with the approved template.
-
-Issues identified:
-
-1. Resource Person information is missing.
-2. Report Title section is missing.
-3. Club section is missing.
-4. Required image captions were not found.
-5. Minimum image count requirement is not satisfied.
-
-Please correct these issues and resubmit the report for validation.
-"""
-
-        return self.client.generate(
-            prompt
-        )
+        return self.client.generate(prompt)

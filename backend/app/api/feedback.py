@@ -1,13 +1,10 @@
-from fastapi import APIRouter
-from fastapi import Depends
-
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
+from app.schemas.feedback import FeedbackBundleResponse
+from app.services.feedback_service import FeedbackService
 
-from app.services.feedback_service import (
-    FeedbackService
-)
 
 router = APIRouter(
     prefix="/feedback",
@@ -15,24 +12,35 @@ router = APIRouter(
 )
 
 
-@router.post(
-    "/generate/{validation_result_id}"
-)
+@router.post("/generate/{validation_result_id}")
 def generate_feedback(
-
     validation_result_id: int,
-
-    db: Session = Depends(
-        get_db
-    )
+    db: Session = Depends(get_db)
 ):
-
-    feedback = (
-        FeedbackService
-        .generate_feedback(
+    try:
+        return FeedbackService.generate_feedback(
             db,
             validation_result_id
         )
-    )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc)
+        ) from exc
 
-    return feedback
+
+@router.post("/{validation_result_id}", response_model=FeedbackBundleResponse)
+def generate_feedback_bundle(
+    validation_result_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        return FeedbackService.generate_feedback_bundle(
+            db,
+            validation_result_id
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc)
+        ) from exc

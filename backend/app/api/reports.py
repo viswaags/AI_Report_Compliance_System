@@ -1,45 +1,22 @@
-from fastapi import APIRouter, Depends
+import os
+import shutil
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
-
+from app.models.feedback import Feedback
 from app.models.report import Report
+from app.models.report_extraction import ReportExtraction
 from app.models.report_version import ReportVersion
-
+from app.models.validation_result import ValidationResult
 from app.schemas.report import ReportCreate
-
-import os
-
-from fastapi import UploadFile
-from fastapi import File
-from fastapi import Form
-
-from app.models.template import Template
-
-from app.services.document_parser import DocumentParser
-from app.services.report_extractor import ReportExtractor
-from app.services.compliance_engine import ComplianceEngine
-
-from app.services.report_extraction_service import (
-    ReportExtractionService
-)
-
-from app.services.validation_result_service import (
-    ValidationResultService
-)
-
-from app.services.template_service import (
-    TemplateService
-)
-
-from app.services.report_service import (
-    ReportService
-)
-
-from app.services.report_version_service import (
-    ReportVersionService
-)
-
+from app.services.feedback_service import FeedbackService
+from app.services.report_pipeline_service import ReportPipelineService
+from app.services.report_service import ReportService
+from app.services.report_version_service import ReportVersionService
+from app.auth.dependencies import require_role
+from app.models.user import User, UserRole
 
 router = APIRouter(
     prefix="/reports",
@@ -47,15 +24,18 @@ router = APIRouter(
 )
 
 
+UPLOAD_DIR = "uploads"
+
+
 @router.post("/")
 def create_report(
     report: ReportCreate,
     db: Session = Depends(get_db)
 ):
-
     db_report = Report(
         event_id=report.event_id,
-        template_id=report.template_id
+        template_id=report.template_id,
+        current_version=1
     )
 
     db.add(db_report)
@@ -82,33 +62,22 @@ def create_report(
 def get_reports(
     db: Session = Depends(get_db)
 ):
+    return db.query(Report).all()
 
-    return db.query(
-        Report
-    ).all()
 
 @router.post("/submit")
 def submit_report(
     event_id: int = Form(...),
     template_id: int = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-
-    file_path = os.path.join(
-        upload_dir,
-        file.filename
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.STUDENT_REPRESENTATIVE
+        )
     )
-
-    with open(file_path, "wb") as f:
-        f.write(file.file.read())
-
-    #
-    # Create Report
-    #
+):
+    file_path = _save_upload(file)
 
     report = Report(
         event_id=event_id,
@@ -116,363 +85,197 @@ def submit_report(
         status="VALIDATING",
         current_version=1
     )
-
     db.add(report)
     db.commit()
     db.refresh(report)
 
-    #
-    # Create Version
-    #
-
     version = ReportVersion(
-    report_id=report.id,
-    version_no=1,
-    drive_file_id=None,
-    file_path=file_path
+        report_id=report.id,
+        version_no=1,
+        drive_file_id=None,
+        file_path=file_path
     )
-
     db.add(version)
     db.commit()
     db.refresh(version)
 
-    #
-    # Parse File
-    #
-
-    if file.filename.endswith(".pdf"):
-
-        parsed = DocumentParser.parse_pdf(
+    try:
+        pipeline_result = ReportPipelineService.process_report_version(
+            db,
+            report,
+            version,
             file_path
         )
-
-    elif file.filename.endswith(".docx"):
-
-        parsed = DocumentParser.parse_docx(
-            file_path
-        )
-
-    else:
-
-        return {
-            "status": "error",
-            "message": "Unsupported file type"
-        }
-
-    #
-    # Template
-    #
-
-    template = (
-        db.query(Template)
-        .filter(
-            Template.id == template_id
-        )
-        .first()
-    )
-
-    if not template:
-
-        return {
-            "status": "error",
-            "message": "Template not found"
-        }
-
-    #
-    # Extract
-    #
-
-    extracted = ReportExtractor.extract(
-        parsed,
-        template.schema_json
-    )
-
-    ReportExtractionService.create_or_update(
-        db=db,
-        report_version_id=version.id,
-        extracted_json=extracted
-    )
-
-    #
-    # Validate
-    #
-
-    latest_template = (
-        TemplateService.get_latest_template(db)
-    )
-
-    latest_template_check = (
-        latest_template.id ==
-        template.id
-    )
-
-    validation = (
-        ComplianceEngine.validate(
-            extracted,
-            template.schema_json,
-            latest_template_check
-        )
-    )
-
-    ValidationResultService.create_validation_result(
-        db=db,
-        report_version_id=version.id,
-        compliance_score=validation[
-            "compliance_score"
-        ],
-        issues=validation[
-            "issues"
-        ]
-    )
-
-    #
-    # Update Status
-    #
-
-    if validation["status"] == "passed":
-
-        ReportService.update_status(
-            db,
-            report.id,
-            "COMPLIANCE_PASSED"
-        )
-
-    else:
-
-        ReportService.update_status(
-            db,
-            report.id,
-            "CORRECTION_REQUIRED"
-        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc)
+        ) from exc
 
     return {
         "report_id": report.id,
         "version_id": version.id,
-        "validation": validation
+        "raw_extraction": pipeline_result["raw_extraction"],
+        "canonical_report_model": pipeline_result["canonical_report_model"],
+        "validation": pipeline_result["validation"],
+        "validation_result_id": pipeline_result["validation_result"].id
     }
+
 
 @router.post("/resubmit")
 def resubmit_report(
     report_id: int = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.STUDENT_REPRESENTATIVE
+        )
+    )
 ):
-
-    report = ReportService.get_report(
-        db,
-        report_id
-    )
-
+    report = ReportService.get_report(db, report_id)
     if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
 
-        return {
-            "status": "error",
-            "message": "Report not found"
-        }
+    next_version = ReportService.increment_version(db, report_id)
+    filename = f"report_{report_id}_v{next_version}_{file.filename}"
+    file_path = _save_upload(file, filename)
 
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
+    version = ReportVersionService.create_version(
+        db=db,
+        report_id=report_id,
+        version_no=next_version,
+        file_path=file_path
+    )
 
-    next_version = (
-        ReportService.increment_version(
+    try:
+        pipeline_result = ReportPipelineService.process_report_version(
             db,
-            report_id
-        )
-    )
-
-    filename = (
-        f"report_{report_id}_v"
-        f"{next_version}_"
-        f"{file.filename}"
-    )
-
-    file_path = os.path.join(
-        upload_dir,
-        filename
-    )
-
-    with open(file_path, "wb") as f:
-        f.write(file.file.read())
-
-    version = (
-        ReportVersionService.create_version(
-            db=db,
-            report_id=report_id,
-            version_no=next_version,
-            file_path=file_path
-        )
-    )
-
-    #
-    # Parse
-    #
-
-    if file.filename.endswith(".pdf"):
-
-        parsed = DocumentParser.parse_pdf(
+            report,
+            version,
             file_path
         )
-
-    elif file.filename.endswith(".docx"):
-
-        parsed = DocumentParser.parse_docx(
-            file_path
-        )
-
-    else:
-
-        return {
-            "status": "error",
-            "message": "Unsupported file type"
-        }
-
-    #
-    # Template
-    #
-
-    template = (
-        db.query(Template)
-        .filter(
-            Template.id ==
-            report.template_id
-        )
-        .first()
-    )
-
-    if not template:
-
-        return {
-            "status": "error",
-            "message": "Template not found"
-        }
-
-    #
-    # Extract
-    #
-
-    extracted = ReportExtractor.extract(
-        parsed,
-        template.schema_json
-    )
-
-    ReportExtractionService.create_or_update(
-        db=db,
-        report_version_id=version.id,
-        extracted_json=extracted
-    )
-
-    #
-    # Validate
-    #
-
-    latest_template = (
-        TemplateService.get_latest_template(db)
-    )
-
-    latest_template_check = (
-        latest_template.id ==
-        template.id
-    )
-
-    validation = (
-        ComplianceEngine.validate(
-            extracted,
-            template.schema_json,
-            latest_template_check
-        )
-    )
-
-    ValidationResultService.create_validation_result(
-        db=db,
-        report_version_id=version.id,
-        compliance_score=validation[
-            "compliance_score"
-        ],
-        issues=validation[
-            "issues"
-        ]
-    )
-
-    #
-    # Status Update
-    #
-
-    if validation["status"] == "passed":
-
-        ReportService.update_status(
-            db,
-            report.id,
-            "COMPLIANCE_PASSED"
-        )
-
-    else:
-
-        ReportService.update_status(
-            db,
-            report.id,
-            "CORRECTION_REQUIRED"
-        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc)
+        ) from exc
 
     return {
         "report_id": report.id,
         "version_no": next_version,
         "report_version_id": version.id,
-        "validation": validation
+        "raw_extraction": pipeline_result["raw_extraction"],
+        "canonical_report_model": pipeline_result["canonical_report_model"],
+        "validation": pipeline_result["validation"],
+        "validation_result_id": pipeline_result["validation_result"].id
     }
+
+
+@router.get("/{report_id}/compliance")
+def get_report_compliance(
+    report_id: int,
+    db: Session = Depends(get_db)
+):
+    validation = _latest_validation(db, report_id)
+    if not validation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compliance result not found"
+        )
+
+    return {
+        "validation_result_id": validation.id,
+        "report_version_id": validation.report_version_id,
+        "compliance_score": validation.compliance_score,
+        "issues_json": validation.issues_json,
+        "created_at": validation.created_at
+    }
+
+
+@router.get("/{report_id}/feedback")
+def get_report_feedback(
+    report_id: int,
+    db: Session = Depends(get_db)
+):
+    feedback = FeedbackService.latest_feedback_for_report(db, report_id)
+    if not feedback:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Feedback not found"
+        )
+
+    return feedback
+
+
+@router.get("/{report_id}/email-draft")
+def get_report_email_draft(
+    report_id: int,
+    db: Session = Depends(get_db)
+):
+    draft = FeedbackService.latest_email_draft_for_report(db, report_id)
+    if not draft:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email draft not found"
+        )
+
+    return draft
+
 
 @router.get("/{report_id}/history")
 def report_history(
     report_id: int,
     db: Session = Depends(get_db)
 ):
-
     versions = (
-        db.query(
-            ReportVersion
-        )
-        .filter(
-            ReportVersion.report_id
-            ==
-            report_id
-        )
-        .order_by(
-            ReportVersion.version_no
-        )
+        db.query(ReportVersion)
+        .filter(ReportVersion.report_id == report_id)
+        .order_by(ReportVersion.version_no)
         .all()
     )
 
-    return versions
+    history = []
+    for version in versions:
+        extraction = (
+            db.query(ReportExtraction)
+            .filter(ReportExtraction.report_version_id == version.id)
+            .first()
+        )
+        validation = (
+            db.query(ValidationResult)
+            .filter(ValidationResult.report_version_id == version.id)
+            .order_by(ValidationResult.id.desc())
+            .first()
+        )
+        history.append({
+            "version": version,
+            "extraction": extraction.extracted_json if extraction else None,
+            "validation": validation
+        })
+
+    return history
+
 
 @router.get("/{report_id}")
 def get_report_details(
     report_id: int,
     db: Session = Depends(get_db)
 ):
-
-    report = (
-        db.query(Report)
-        .filter(
-            Report.id == report_id
-        )
-        .first()
-    )
-
+    report = ReportService.get_report(db, report_id)
     if not report:
-
-        return {
-            "status": "error",
-            "message": "Report not found"
-        }
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
 
     versions = (
-        db.query(
-            ReportVersion
-        )
-        .filter(
-            ReportVersion.report_id
-            ==
-            report_id
-        )
+        db.query(ReportVersion)
+        .filter(ReportVersion.report_id == report_id)
+        .order_by(ReportVersion.version_no)
         .all()
     )
 
@@ -480,3 +283,34 @@ def get_report_details(
         "report": report,
         "versions": versions
     }
+
+
+def _save_upload(file: UploadFile, filename: str | None = None):
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    if extension not in {".pdf", ".docx"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF and DOCX reports are supported"
+        )
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    safe_filename = os.path.basename(filename or file.filename or "report")
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
+
+    with open(file_path, "wb") as output_file:
+        shutil.copyfileobj(file.file, output_file)
+
+    return file_path
+
+
+def _latest_validation(db: Session, report_id: int):
+    return (
+        db.query(ValidationResult)
+        .join(
+            ReportVersion,
+            ValidationResult.report_version_id == ReportVersion.id
+        )
+        .filter(ReportVersion.report_id == report_id)
+        .order_by(ValidationResult.id.desc())
+        .first()
+    )

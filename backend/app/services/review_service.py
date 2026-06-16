@@ -1,13 +1,18 @@
-from app.models.review import Review
 from app.models.report import Report
+from app.models.review import Review
 
 
 class ReviewService:
 
-    VALID_REVIEW_STATUSES = {
-        "UNDER_REVIEW",
-        "APPROVED",
-        "REJECTED"
+    VALID_TRANSITIONS = {
+        "COMPLIANCE_PASSED": {
+            "PENDING_COORDINATOR_REVIEW"
+        },
+
+        "PENDING_COORDINATOR_REVIEW": {
+            "APPROVED",
+            "REJECTED"
+        }
     }
 
     @staticmethod
@@ -18,37 +23,22 @@ class ReviewService:
         status,
         comments
     ):
-
         report = (
             db.query(Report)
-            .filter(
-                Report.id == report_id
-            )
+            .filter(Report.id == report_id)
             .first()
         )
 
         if not report:
-            raise ValueError(
-                "Report not found"
-            )
+            raise ValueError("Report not found")
 
-        if status not in (
-            ReviewService
-            .VALID_REVIEW_STATUSES
-        ):
+        allowed_statuses = ReviewService.VALID_TRANSITIONS.get(
+            report.status,
+            set()
+        )
+        if status not in allowed_statuses:
             raise ValueError(
-                "Invalid review status"
-            )
-
-        if (
-            report.status
-            !=
-            "COMPLIANCE_PASSED"
-            and
-            status == "APPROVED"
-        ):
-            raise ValueError(
-                "Report must pass compliance first"
+                f"Invalid review transition from {report.status} to {status}"
             )
 
         review = Review(
@@ -57,11 +47,10 @@ class ReviewService:
             status=status,
             comments=comments
         )
+        report.status = status
 
         db.add(review)
-
         db.commit()
-
         db.refresh(review)
 
         return review

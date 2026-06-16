@@ -5,12 +5,16 @@ from fastapi import (
 
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_role
 from app.database.dependencies import get_db
 
 from app.models.event import Event
+from app.models.user import (
+    User,
+    UserRole
+)
 
 from app.schemas.event import EventCreate
-
 
 router = APIRouter(
     prefix="/events",
@@ -21,9 +25,13 @@ router = APIRouter(
 @router.post("/")
 def create_event(
     event: EventCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.STUDENT_REPRESENTATIVE
+        )
+    )
 ):
-
     db_event = Event(
         club_id=event.club_id,
         event_title=event.event_title,
@@ -44,7 +52,6 @@ def create_event(
 def get_events(
     db: Session = Depends(get_db)
 ):
-
     return db.query(
         Event
     ).all()

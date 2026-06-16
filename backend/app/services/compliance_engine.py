@@ -1,428 +1,599 @@
 from typing import Any
 
-from app.services.layout_validator import LayoutValidator
-from app.services.section_order_validator import SectionOrderValidator
-
 
 class ComplianceEngine:
 
     @staticmethod
     def validate(
-        report_data,
         template_schema,
+        canonical_report_model=None,
         latest_template_check=True
     ):
-        issues = []
-        metadata_issues = []
-        header_issues = []
-        image_issues = []
-        signature_issues = []
-        template_issues = []
-        layout_issues = []
-        section_issues = []
+        if ComplianceEngine._looks_like_report_model(template_schema):
+            template_schema, canonical_report_model = (
+                canonical_report_model,
+                template_schema
+            )
 
-        total_checks = 0
-        passed_checks = 0
+        template_schema = template_schema or {}
+        canonical_report_model = canonical_report_model or {}
+        components = template_schema.get("components", {})
 
-        field_configs = ComplianceEngine._collect_field_configs(template_schema)
-        report_fields = ComplianceEngine._report_fields(report_data)
+        findings = []
 
-        for field, config in field_configs.items():
-            if not ComplianceEngine._is_required(config):
-                continue
+        findings.extend(
+            ComplianceEngine._validate_page_count(
+                template_schema,
+                canonical_report_model
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_header(
+                components.get("header", {}),
+                canonical_report_model.get("header", {})
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_report_title(
+                components.get("report_title", {}),
+                canonical_report_model.get("report_title", {})
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_event_table(
+                components.get("event_information_table", {}),
+                canonical_report_model.get("event_information_table", {})
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_summary(
+                components.get("summary", {}),
+                canonical_report_model.get("summary", {})
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_images(
+                components.get("images", {}),
+                canonical_report_model.get("images", {})
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_signatures(
+                components.get("signatures", {}),
+                canonical_report_model.get("signatures", {})
+            )
+        )
+        findings.extend(
+            ComplianceEngine._validate_document_order(
+                template_schema,
+                canonical_report_model
+            )
+        )
 
-            total_checks += 1
-
-            if ComplianceEngine._has_value(report_fields.get(field)):
-                passed_checks += 1
-            else:
-                issue = ComplianceEngine._issue(
-                    issue_type="missing_field",
-                    field=field,
-                    severity=config.get("severity", "medium"),
-                    message=config.get(
-                        "message",
-                        f"{ComplianceEngine._label(field)} field is missing"
-                    )
+        findings.append(
+            ComplianceEngine._finding(
+                rule_id="TEMPLATE_VERSION_LATEST",
+                category="DOCUMENT_STRUCTURE",
+                severity="HIGH",
+                status="PASSED" if latest_template_check else "FAILED",
+                expected="Report uses latest template",
+                actual="Latest template" if latest_template_check else "Older template",
+                message=(
+                    "Report uses the latest template"
+                    if latest_template_check
+                    else "Report is not using the latest approved template"
                 )
-                issues.append(issue)
-                ComplianceEngine._append_category_issue(
-                    field,
-                    issue,
-                    template_schema,
-                    metadata_issues,
-                    header_issues,
-                    signature_issues
-                )
-
-        section_result = SectionOrderValidator.validate(
-            report_data,
-            template_schema
+            )
         )
-        total_checks += section_result["total_checks"]
-        passed_checks += section_result["passed_checks"]
-        issues.extend(section_result["issues"])
-        section_issues.extend(section_result["issues"])
 
-        required_section_result = ComplianceEngine._validate_required_sections(
-            report_data,
-            template_schema
-        )
-        total_checks += required_section_result["total_checks"]
-        passed_checks += required_section_result["passed_checks"]
-        issues.extend(required_section_result["issues"])
-        section_issues.extend(required_section_result["issues"])
-
-        image_result = ComplianceEngine._validate_images(
-            report_data,
-            template_schema
-        )
-        total_checks += image_result["total_checks"]
-        passed_checks += image_result["passed_checks"]
-        issues.extend(image_result["issues"])
-        image_issues.extend(image_result["issues"])
-
-        layout_result = LayoutValidator.validate(
-            report_data,
-            template_schema
-        )
-        total_checks += layout_result["total_checks"]
-        passed_checks += layout_result["passed_checks"]
-        issues.extend(layout_result["issues"])
-        layout_issues.extend(layout_result["issues"])
-
-        template_result = ComplianceEngine._validate_template_rules(
-            report_data,
-            template_schema,
-            latest_template_check
-        )
-        total_checks += template_result["total_checks"]
-        passed_checks += template_result["passed_checks"]
-        issues.extend(template_result["issues"])
-        template_issues.extend(template_result["template_issues"])
-        layout_issues.extend(template_result["layout_issues"])
-
+        failed_findings = [
+            finding
+            for finding in findings
+            if finding.get("status") == "FAILED"
+        ]
+        passed_count = len(findings) - len(failed_findings)
         compliance_score = (
-            0
-            if total_checks == 0
-            else round((passed_checks / total_checks) * 100, 2)
+            100
+            if not findings
+            else round((passed_count / len(findings)) * 100, 2)
         )
 
         return {
-            "status": "passed" if len(issues) == 0 else "failed",
+            "status": "passed" if not failed_findings else "failed",
             "compliance_score": compliance_score,
-            "issues": issues,
-            "metadata_issues": metadata_issues,
-            "header_issues": header_issues,
-            "image_issues": image_issues,
-            "signature_issues": signature_issues,
-            "template_issues": template_issues,
-            "layout_issues": layout_issues,
-            "section_issues": section_issues,
-            "total_checks": total_checks,
-            "passed_checks": passed_checks
+            "compliance_findings": findings,
+            "issues_json": failed_findings,
+            "issues": failed_findings,
+            "total_checks": len(findings),
+            "passed_checks": passed_count,
+            "metadata_issues": [],
+            "header_issues": ComplianceEngine._category_issues(
+                failed_findings,
+                "LAYOUT_VALIDATION"
+            ),
+            "image_issues": ComplianceEngine._category_issues(
+                failed_findings,
+                "IMAGE_VALIDATION"
+            ),
+            "signature_issues": ComplianceEngine._category_issues(
+                failed_findings,
+                "SIGNATURE_VALIDATION"
+            ),
+            "template_issues": [],
+            "layout_issues": ComplianceEngine._category_issues(
+                failed_findings,
+                "LAYOUT_VALIDATION"
+            ),
+            "section_issues": ComplianceEngine._category_issues(
+                failed_findings,
+                "DOCUMENT_STRUCTURE"
+            ),
         }
 
     @staticmethod
-    def _collect_field_configs(template_schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        fields = {}
+    def _validate_page_count(template_schema, report_model):
+        exact_pages = template_schema.get("page_constraints", {}).get("exact_pages")
+        if exact_pages is None:
+            return []
 
-        for field in template_schema.get("required_fields", []):
-            fields[field] = {"required": True}
-
-        container_keys = {
-            "sections",
-            "section_order",
-            "fields",
-            "layout_rules",
-            "validation_rules",
-            "images",
-            "signature_sections",
-            "page_constraints",
-            "version",
-        }
-
-        for section_name, section_config in template_schema.items():
-            if section_name in container_keys:
-                continue
-
-            if not isinstance(section_config, dict):
-                continue
-
-            if "required_fields" in section_config:
-                for field in section_config.get("required_fields", []):
-                    fields.setdefault(field, {"required": True})
-
-            for field, config in section_config.items():
-                if field in {"required_fields", "zones", "layout_rules"}:
-                    continue
-
-                if isinstance(config, dict) and ComplianceEngine._looks_like_field_config(config):
-                    fields.setdefault(field, config)
-
-        fields_node = template_schema.get("fields")
-        if isinstance(fields_node, dict):
-            for field, config in fields_node.items():
-                fields[field] = config if isinstance(config, dict) else {"required": True}
-        elif isinstance(fields_node, list):
-            for item in fields_node:
-                if isinstance(item, str):
-                    fields[item] = {"required": True}
-                elif isinstance(item, dict):
-                    field = item.get("key") or item.get("name") or item.get("field")
-                    if field:
-                        fields[field] = item
-
-        return fields
+        actual = report_model.get("page_count")
+        return [
+            ComplianceEngine._finding(
+                rule_id="PAGE_EXACT_COUNT",
+                category="PAGE_VALIDATION",
+                severity="HIGH",
+                status="PASSED" if actual == exact_pages else "FAILED",
+                expected=exact_pages,
+                actual=actual,
+                message=(
+                    f"Report has exactly {exact_pages} page(s)"
+                    if actual == exact_pages
+                    else f"Report must be exactly {exact_pages} page(s)"
+                )
+            )
+        ]
 
     @staticmethod
-    def _looks_like_field_config(config):
-        field_keys = {
-            "required",
-            "label",
-            "labels",
-            "aliases",
-            "display_name",
-            "layout",
-            "zone",
-            "position",
-            "severity"
-        }
-        return any(key in config for key in field_keys)
+    def _validate_header(header_schema, header_model):
+        if not header_schema:
+            return []
 
-    @staticmethod
-    def _report_fields(report_data):
-        fields = dict(report_data.get("fields", {}))
+        findings = []
+        required = header_schema.get("required", False)
+        present = header_model.get("present", False)
+        findings.append(
+            ComplianceEngine._finding(
+                rule_id="HEADER_EXISTS",
+                category="DOCUMENT_STRUCTURE",
+                severity="HIGH",
+                status="PASSED" if present or not required else "FAILED",
+                expected="Header component present" if required else "Header optional",
+                actual="Present" if present else "Missing",
+                message=(
+                    "Header component is present"
+                    if present or not required
+                    else "Required header component is missing"
+                )
+            )
+        )
 
-        for section_name in ["header", "metadata_table"]:
-            section = report_data.get(section_name, {})
-            if isinstance(section, dict):
-                fields.update(section)
-
-        return fields
-
-    @staticmethod
-    def _validate_required_sections(report_data, template_schema):
-        issues = []
-        total_checks = 0
-        passed_checks = 0
-        sections = report_data.get("sections", {})
-
-        for section, config in ComplianceEngine._required_sections(template_schema).items():
-            total_checks += 1
-            if sections.get(section, {}).get("present"):
-                passed_checks += 1
-            else:
-                issues.append(ComplianceEngine._issue(
-                    issue_type="missing_section",
-                    field=section,
-                    severity=config.get("severity", "medium"),
-                    message=config.get(
-                        "message",
-                        f"{ComplianceEngine._label(section)} section is missing"
+        for element, config in header_schema.get("elements", {}).items():
+            model_element = header_model.get("elements", {}).get(element, {})
+            if config.get("required", False):
+                findings.append(
+                    ComplianceEngine._finding(
+                        rule_id=f"HEADER_ELEMENT_{element.upper()}_EXISTS",
+                        category="DOCUMENT_STRUCTURE",
+                        severity="HIGH",
+                        status=(
+                            "PASSED"
+                            if model_element.get("present")
+                            else "FAILED"
+                        ),
+                        expected=f"{element} present",
+                        actual=(
+                            "Present"
+                            if model_element.get("present")
+                            else "Missing"
+                        ),
+                        message=(
+                            f"{element} is present"
+                            if model_element.get("present")
+                            else f"Required header element '{element}' is missing"
+                        )
                     )
-                ))
-
-        return {
-            "issues": issues,
-            "total_checks": total_checks,
-            "passed_checks": passed_checks
-        }
-
-    @staticmethod
-    def _required_sections(template_schema):
-        sections = {}
-
-        for section in template_schema.get("required_sections", []):
-            sections[section] = {"required": True}
-
-        sections_node = template_schema.get("sections")
-
-        if isinstance(sections_node, dict):
-            for section, config in sections_node.items():
-                if isinstance(config, dict) and config.get("required", False):
-                    sections[section] = config
-        elif isinstance(sections_node, list):
-            for item in sections_node:
-                if isinstance(item, str):
-                    sections[item] = {"required": True}
-                elif isinstance(item, dict) and item.get("required", False):
-                    section = item.get("key") or item.get("name") or item.get("section")
-                    if section:
-                        sections[section] = item
-
-        return sections
-
-    @staticmethod
-    def _validate_images(report_data, template_schema):
-        image_rules = template_schema.get("images", {})
-
-        if not isinstance(image_rules, dict):
-            return {
-                "issues": [],
-                "total_checks": 0,
-                "passed_checks": 0
-            }
-
-        report_images = report_data.get("images", {})
-        total_checks = 0
-        passed_checks = 0
-        issues = []
-
-        if image_rules.get("required", False) or "min_images" in image_rules or "max_images" in image_rules:
-            total_checks += 1
-            image_count = report_images.get("count", 0)
-            min_images = image_rules.get("min_images", 0)
-            max_images = image_rules.get("max_images")
-
-            valid_min = image_count >= min_images
-            valid_max = True if max_images is None else image_count <= max_images
-
-            if valid_min and valid_max:
-                passed_checks += 1
-            else:
-                issues.append(ComplianceEngine._issue(
-                    issue_type="image_count",
-                    field="image_count",
-                    severity=image_rules.get("severity", "medium"),
-                    message="Image count does not satisfy template schema",
-                    expected={
-                        "min_images": min_images,
-                        "max_images": max_images
-                    },
-                    actual=image_count
-                ))
-
-        if image_rules.get("caption_required", False):
-            total_checks += 1
-            if report_images.get("caption_present", False):
-                passed_checks += 1
-            else:
-                issues.append(ComplianceEngine._issue(
-                    issue_type="missing_field",
-                    field="image_captions",
-                    severity=image_rules.get("caption_severity", "medium"),
-                    message="Image captions are missing"
-                ))
-
-        return {
-            "issues": issues,
-            "total_checks": total_checks,
-            "passed_checks": passed_checks
-        }
-
-    @staticmethod
-    def _validate_template_rules(
-        report_data,
-        template_schema,
-        latest_template_check
-    ):
-        layout_rules = template_schema.get("layout_rules", {})
-        report_layout = report_data.get("layout", {})
-
-        issues = []
-        template_issues = []
-        layout_issues = []
-        total_checks = 0
-        passed_checks = 0
-
-        page_limit = layout_rules.get("page_limit") or template_schema.get("page_limit")
-        if page_limit:
-            total_checks += 1
-            if report_layout.get("page_count") == page_limit:
-                passed_checks += 1
-            else:
-                issue = ComplianceEngine._issue(
-                    issue_type="page_count",
-                    field="page_count",
-                    severity=layout_rules.get("severity", "medium"),
-                    message=f"Report must be exactly {page_limit} page(s)",
-                    expected=page_limit,
-                    actual=report_layout.get("page_count")
                 )
-                issues.append(issue)
-                layout_issues.append(issue)
 
-        if layout_rules.get("latest_template_required", False):
-            total_checks += 1
-            if latest_template_check:
-                passed_checks += 1
-            else:
-                issue = ComplianceEngine._issue(
-                    issue_type="template_version",
-                    field="template",
-                    severity="high",
-                    message="Report is not using the latest template"
+            expected_position = config.get("position")
+            if expected_position and model_element.get("present"):
+                actual_position = model_element.get("zone")
+                findings.append(
+                    ComplianceEngine._finding(
+                        rule_id=f"HEADER_ELEMENT_{element.upper()}_LAYOUT",
+                        category="LAYOUT_VALIDATION",
+                        severity="MEDIUM",
+                        status=(
+                            "PASSED"
+                            if actual_position == expected_position
+                            else "FAILED"
+                        ),
+                        expected=expected_position,
+                        actual=actual_position,
+                        message=(
+                            f"{element} is in the expected layout zone"
+                            if actual_position == expected_position
+                            else f"{element} is not in the expected layout zone"
+                        )
+                    )
                 )
-                issues.append(issue)
-                template_issues.append(issue)
 
-        return {
-            "issues": issues,
-            "template_issues": template_issues,
-            "layout_issues": layout_issues,
-            "total_checks": total_checks,
-            "passed_checks": passed_checks
-        }
+        return findings
 
     @staticmethod
-    def _append_category_issue(
-        field,
-        issue,
-        template_schema,
-        metadata_issues,
-        header_issues,
-        signature_issues
+    def _validate_report_title(title_schema, title_model):
+        if not title_schema:
+            return []
+
+        required = title_schema.get("required", False)
+        present = title_model.get("present", False)
+        return [
+            ComplianceEngine._finding(
+                rule_id="REPORT_TITLE_EXISTS",
+                category="DOCUMENT_STRUCTURE",
+                severity="HIGH",
+                status="PASSED" if present or not required else "FAILED",
+                expected="Report title present" if required else "Report title optional",
+                actual=title_model.get("text"),
+                message=(
+                    "Report title is present"
+                    if present or not required
+                    else "Required report title is missing"
+                )
+            )
+        ]
+
+    @staticmethod
+    def _validate_event_table(table_schema, table_model):
+        if not table_schema:
+            return []
+
+        findings = []
+        table_required = table_schema.get("table_required", False)
+        table_present = table_model.get("table_present", False)
+        findings.append(
+            ComplianceEngine._finding(
+                rule_id="EVENT_INFORMATION_TABLE_EXISTS",
+                category="TABLE_STRUCTURE",
+                severity="HIGH",
+                status=(
+                    "PASSED"
+                    if table_present or not table_required
+                    else "FAILED"
+                ),
+                expected="Event information component must be a table",
+                actual="Table present" if table_present else "Table missing",
+                message=(
+                    "Event information table is present"
+                    if table_present or not table_required
+                    else "Event information must be provided inside a table"
+                )
+            )
+        )
+
+        expected_order = table_schema.get("field_order", [])
+        actual_order = table_model.get("field_order", [])
+        comparable_actual_order = [
+            field
+            for field in actual_order
+            if field in expected_order
+        ]
+        expected_present_order = [
+            field
+            for field in expected_order
+            if field in comparable_actual_order
+        ]
+        findings.append(
+            ComplianceEngine._finding(
+                rule_id="EVENT_INFORMATION_TABLE_FIELD_ORDER",
+                category="TABLE_STRUCTURE",
+                severity="MEDIUM",
+                status=(
+                    "PASSED"
+                    if comparable_actual_order == expected_present_order
+                    else "FAILED"
+                ),
+                expected=expected_order,
+                actual=comparable_actual_order,
+                message=(
+                    "Event information table fields are in the expected order"
+                    if comparable_actual_order == expected_present_order
+                    else "Event information table fields are not in the expected order"
+                )
+            )
+        )
+
+        fields = table_model.get("fields", {})
+        for field, config in table_schema.get("fields", {}).items():
+            if not config.get("required", True):
+                continue
+
+            value = fields.get(field)
+            has_value = ComplianceEngine._has_value(value)
+            present = field in fields and has_value
+            findings.append(
+                ComplianceEngine._finding(
+                    rule_id=f"EVENT_TABLE_FIELD_{field.upper()}_PRESENT",
+                    category="FIELD_VALIDATION",
+                    severity="HIGH",
+                    status="PASSED" if present else "FAILED",
+                    expected=f"{config.get('label', field)} field present",
+                    actual="Present" if present else "Missing",
+                    message=(
+                        f"{config.get('label', field)} field is present"
+                        if present
+                        else f"Required table field '{config.get('label', field)}' is missing"
+                    )
+                )
+            )
+            findings.append(
+                ComplianceEngine._finding(
+                    rule_id=f"EVENT_TABLE_FIELD_{field.upper()}_VALUE",
+                    category="FIELD_VALIDATION",
+                    severity="HIGH",
+                    status="PASSED" if has_value else "FAILED",
+                    expected=f"{config.get('label', field)} has a value",
+                    actual=value,
+                    message=(
+                        f"{config.get('label', field)} has a value"
+                        if has_value
+                        else f"Required table field '{config.get('label', field)}' is empty"
+                    )
+                )
+            )
+
+        return findings
+
+    @staticmethod
+    def _validate_summary(summary_schema, summary_model):
+        if not summary_schema:
+            return []
+
+        findings = []
+        required = summary_schema.get("required", False)
+        present = summary_model.get("present", False)
+        findings.append(
+            ComplianceEngine._finding(
+                rule_id="SUMMARY_EXISTS",
+                category="DOCUMENT_STRUCTURE",
+                severity="HIGH",
+                status="PASSED" if present or not required else "FAILED",
+                expected="Summary present" if required else "Summary optional",
+                actual="Present" if present else "Missing",
+                message=(
+                    "Summary is present"
+                    if present or not required
+                    else "Required summary is missing"
+                )
+            )
+        )
+
+        allowed_formats = summary_schema.get("allowed_formats", [])
+        actual_format = summary_model.get("format")
+        if allowed_formats and actual_format:
+            findings.append(
+                ComplianceEngine._finding(
+                    rule_id="SUMMARY_FORMAT_ALLOWED",
+                    category="DOCUMENT_STRUCTURE",
+                    severity="MEDIUM",
+                    status=(
+                        "PASSED"
+                        if actual_format in allowed_formats
+                        else "FAILED"
+                    ),
+                    expected=allowed_formats,
+                    actual=actual_format,
+                    message=(
+                        "Summary format is allowed by template"
+                        if actual_format in allowed_formats
+                        else "Summary format is not allowed by template"
+                    )
+                )
+            )
+
+        return findings
+
+    @staticmethod
+    def _validate_images(images_schema, images_model):
+        if not images_schema:
+            return []
+
+        findings = []
+        count = images_model.get("count", 0)
+        min_images = images_schema.get("min_images", 0)
+        max_images = images_schema.get("max_images")
+        valid_min = count >= min_images
+        valid_max = max_images is None or count <= max_images
+
+        findings.append(
+            ComplianceEngine._finding(
+                rule_id="IMAGE_COUNT",
+                category="IMAGE_VALIDATION",
+                severity="HIGH",
+                status="PASSED" if valid_min and valid_max else "FAILED",
+                expected={
+                    "min_images": min_images,
+                    "max_images": max_images,
+                },
+                actual=count,
+                message=(
+                    "Image count satisfies template requirements"
+                    if valid_min and valid_max
+                    else "Image count does not satisfy template requirements"
+                )
+            )
+        )
+
+        if images_schema.get("caption_required", False):
+            findings.append(
+                ComplianceEngine._finding(
+                    rule_id="IMAGE_CAPTIONS",
+                    category="IMAGE_VALIDATION",
+                    severity="MEDIUM",
+                    status=(
+                        "PASSED"
+                        if images_model.get("caption_present")
+                        else "FAILED"
+                    ),
+                    expected="At least one image caption present",
+                    actual=images_model.get("captions", []),
+                    message=(
+                        "Image captions are present"
+                        if images_model.get("caption_present")
+                        else "Image captions are required by the template"
+                    )
+                )
+            )
+
+        return findings
+
+    @staticmethod
+    def _validate_signatures(signatures_schema, signatures_model):
+        if not signatures_schema:
+            return []
+
+        findings = []
+        for element, config in signatures_schema.get("elements", {}).items():
+            model_element = signatures_model.get(element, {})
+            if config.get("required", True):
+                findings.append(
+                    ComplianceEngine._finding(
+                        rule_id=f"SIGNATURE_{element.upper()}_EXISTS",
+                        category="SIGNATURE_VALIDATION",
+                        severity="HIGH",
+                        status=(
+                            "PASSED"
+                            if model_element.get("present")
+                            else "FAILED"
+                        ),
+                        expected=f"{config.get('label', element)} signature present",
+                        actual=(
+                            "Present"
+                            if model_element.get("present")
+                            else "Missing"
+                        ),
+                        message=(
+                            f"{config.get('label', element)} signature is present"
+                            if model_element.get("present")
+                            else f"Required signature '{config.get('label', element)}' is missing"
+                        )
+                    )
+                )
+
+            expected_position = config.get("position")
+            actual_position = model_element.get("zone")
+            if expected_position and model_element.get("present"):
+                findings.append(
+                    ComplianceEngine._finding(
+                        rule_id=f"SIGNATURE_{element.upper()}_LAYOUT",
+                        category="LAYOUT_VALIDATION",
+                        severity="MEDIUM",
+                        status=(
+                            "PASSED"
+                            if actual_position == expected_position
+                            else "FAILED"
+                        ),
+                        expected=expected_position,
+                        actual=actual_position,
+                        message=(
+                            f"{config.get('label', element)} signature is in the expected layout zone"
+                            if actual_position == expected_position
+                            else f"{config.get('label', element)} signature is not in the expected layout zone"
+                        )
+                    )
+                )
+
+        return findings
+
+    @staticmethod
+    def _validate_document_order(template_schema, report_model):
+        expected = template_schema.get("document_order", [])
+        actual = report_model.get("detected_document_order", [])
+        actual_expected = [
+            component
+            for component in actual
+            if component in expected
+        ]
+        expected_present = [
+            component
+            for component in expected
+            if component in actual_expected
+        ]
+
+        if not expected:
+            return []
+
+        return [
+            ComplianceEngine._finding(
+                rule_id="DOCUMENT_COMPONENT_ORDER",
+                category="DOCUMENT_STRUCTURE",
+                severity="MEDIUM",
+                status=(
+                    "PASSED"
+                    if actual_expected == expected_present
+                    else "FAILED"
+                ),
+                expected=expected,
+                actual=actual_expected,
+                message=(
+                    "Document components appear in the expected order"
+                    if actual_expected == expected_present
+                    else "Document components do not appear in the expected order"
+                )
+            )
+        ]
+
+    @staticmethod
+    def _finding(
+        rule_id,
+        category,
+        severity,
+        status,
+        expected,
+        actual,
+        message
     ):
-        if field in template_schema.get("header", {}):
-            header_issues.append(issue)
-        elif field in template_schema.get("metadata_table", {}).get("required_fields", []):
-            metadata_issues.append(issue)
-        elif field in template_schema.get("signature_sections", {}):
-            signature_issues.append(issue)
-        else:
-            metadata_issues.append(issue)
-
-    @staticmethod
-    def _is_required(config):
-        if config is True:
-            return True
-
-        if isinstance(config, dict):
-            return config.get("required", True)
-
-        return False
+        return {
+            "rule_id": rule_id,
+            "category": category,
+            "severity": severity,
+            "status": status,
+            "expected": expected,
+            "actual": actual,
+            "message": message,
+        }
 
     @staticmethod
     def _has_value(value):
         if value is None:
             return False
-
         if isinstance(value, str):
-            return len(value.strip()) > 0
-
+            return bool(value.strip())
         if isinstance(value, (list, dict)):
-            return len(value) > 0
-
+            return bool(value)
         return True
 
     @staticmethod
-    def _issue(
-        issue_type,
-        field,
-        severity,
-        message,
-        **extra
-    ):
-        issue = {
-            "type": issue_type,
-            "field": field,
-            "severity": severity,
-            "message": message
-        }
-        issue.update(extra)
-        return issue
+    def _looks_like_report_model(value: Any):
+        return (
+            isinstance(value, dict)
+            and "event_information_table" in value
+            and "components" not in value
+        )
 
     @staticmethod
-    def _label(field):
-        return field.replace("_", " ").title()
+    def _category_issues(findings, category):
+        return [
+            finding
+            for finding in findings
+            if finding.get("category") == category
+        ]
