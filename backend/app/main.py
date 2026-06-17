@@ -17,6 +17,12 @@ from app.api import reviews
 from app.api.feedback import (
     router as feedback_router
 )
+from app.api.event_records import (
+    router as event_records_router
+)
+from app.api.google_drive import (
+    router as google_drive_router
+)
 
 app = FastAPI(
     title="AI Report Compliance System"
@@ -37,6 +43,12 @@ app.include_router(
 )
 app.include_router(
     feedback_router
+)
+app.include_router(
+    event_records_router
+)
+app.include_router(
+    google_drive_router
 )
 
 

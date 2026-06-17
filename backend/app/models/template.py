@@ -11,6 +11,7 @@ class Template(Base):
     id = Column(Integer, primary_key=True)
     version = Column(String, nullable=False)
     schema_json = Column(JSONB, nullable=False)
+    drive_file_id = Column(String)
 
     created_at = Column(
         DateTime(timezone=True),

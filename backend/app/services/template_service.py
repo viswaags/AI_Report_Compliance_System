@@ -7,15 +7,20 @@ class TemplateService:
     def create_template(
         db,
         version,
-        schema_json
+        schema_json,
+        drive_file_id=None
     ):
+
         template = Template(
             version=version,
-            schema_json=schema_json
+            schema_json=schema_json,
+            drive_file_id=drive_file_id
         )
 
         db.add(template)
+
         db.commit()
+
         db.refresh(template)
 
         return template

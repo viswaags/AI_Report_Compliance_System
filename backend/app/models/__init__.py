@@ -9,3 +9,4 @@ from app.models.event import Event
 from app.models.report_extraction import ReportExtraction
 from app.models.review import Review
 from .feedback import Feedback
+from app.models.event_record import EventRecord

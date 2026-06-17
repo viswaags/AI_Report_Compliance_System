@@ -17,6 +17,14 @@ from app.services.report_service import ReportService
 from app.services.report_version_service import ReportVersionService
 from app.auth.dependencies import require_role
 from app.models.user import User, UserRole
+from app.auth.dependencies import get_current_user
+from app.services.access_control_service import AccessControlService
+from app.models.event import Event
+from app.services.report_drive_service import (
+    ReportDriveService
+)
+
+
 
 router = APIRouter(
     prefix="/reports",
@@ -72,11 +80,43 @@ def submit_report(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_role(
-            UserRole.STUDENT_REPRESENTATIVE
-        )
+        require_role([
+            UserRole.ADMIN,
+            UserRole.STUDENT_REPRESENTATIVE,
+            UserRole.CLUB_COORDINATOR
+        ])
     )
 ):
+    event = (
+        db.query(Event)
+        .filter(Event.id == event_id)
+        .first()
+    )
+
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+
+    user_role = (
+        current_user.role.value
+        if isinstance(current_user.role, UserRole)
+        else current_user.role
+    )
+
+    if user_role != UserRole.ADMIN.value:
+
+        if not AccessControlService.user_can_access_event(
+            db,
+            current_user.id,
+            event_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this event"
+            )
+
     file_path = _save_upload(file)
 
     report = Report(
@@ -85,6 +125,7 @@ def submit_report(
         status="VALIDATING",
         current_version=1
     )
+
     db.add(report)
     db.commit()
     db.refresh(report)
@@ -95,59 +136,15 @@ def submit_report(
         drive_file_id=None,
         file_path=file_path
     )
+
     db.add(version)
     db.commit()
     db.refresh(version)
 
-    try:
-        pipeline_result = ReportPipelineService.process_report_version(
-            db,
-            report,
-            version,
-            file_path
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc)
-        ) from exc
-
-    return {
-        "report_id": report.id,
-        "version_id": version.id,
-        "raw_extraction": pipeline_result["raw_extraction"],
-        "canonical_report_model": pipeline_result["canonical_report_model"],
-        "validation": pipeline_result["validation"],
-        "validation_result_id": pipeline_result["validation_result"].id
-    }
-
-
-@router.post("/resubmit")
-def resubmit_report(
-    report_id: int = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_role(
-            UserRole.STUDENT_REPRESENTATIVE
-        )
-    )
-):
-    report = ReportService.get_report(db, report_id)
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report not found"
-        )
-
-    next_version = ReportService.increment_version(db, report_id)
-    filename = f"report_{report_id}_v{next_version}_{file.filename}"
-    file_path = _save_upload(file, filename)
-
-    version = ReportVersionService.create_version(
+    ReportDriveService.upload_report_version(
         db=db,
-        report_id=report_id,
-        version_no=next_version,
+        report=report,
+        report_version=version,
         file_path=file_path
     )
 
@@ -158,6 +155,100 @@ def resubmit_report(
             version,
             file_path
         )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc)
+        ) from exc
+
+    return {
+        "report_id": report.id,
+        "version_id": version.id,
+        "validation_result_id":
+            pipeline_result["validation_result"].id,
+        "validation":
+            pipeline_result["validation"]
+    }
+
+@router.post("/resubmit")
+def resubmit_report(
+    report_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role([
+            UserRole.ADMIN,
+            UserRole.STUDENT_REPRESENTATIVE,
+            UserRole.CLUB_COORDINATOR
+        ])
+    )
+):
+    report = ReportService.get_report(
+        db,
+        report_id
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+
+    user_role = (
+        current_user.role.value
+        if isinstance(current_user.role, UserRole)
+        else current_user.role
+    )
+
+    if user_role != UserRole.ADMIN.value:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this report"
+            )
+
+    next_version = ReportService.increment_version(
+        db,
+        report_id
+    )
+
+    filename = (
+        f"report_{report_id}_v{next_version}_{file.filename}"
+    )
+
+    file_path = _save_upload(
+        file,
+        filename
+    )
+
+    version = ReportVersionService.create_version(
+        db=db,
+        report_id=report_id,
+        version_no=next_version,
+        file_path=file_path
+    )
+
+    ReportDriveService.upload_report_version(
+        db=db,
+        report=report,
+        report_version=version,
+        file_path=file_path
+    )
+
+    try:
+        pipeline_result = ReportPipelineService.process_report_version(
+            db,
+            report,
+            version,
+            file_path
+        )
+
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -168,12 +259,11 @@ def resubmit_report(
         "report_id": report.id,
         "version_no": next_version,
         "report_version_id": version.id,
-        "raw_extraction": pipeline_result["raw_extraction"],
-        "canonical_report_model": pipeline_result["canonical_report_model"],
-        "validation": pipeline_result["validation"],
-        "validation_result_id": pipeline_result["validation_result"].id
+        "validation_result_id":
+            pipeline_result["validation_result"].id,
+        "validation":
+            pipeline_result["validation"]
     }
-
 
 @router.get("/{report_id}/compliance")
 def get_report_compliance(
