@@ -9,6 +9,9 @@ from app.schemas.review import ReviewCreate
 from app.services.review_service import ReviewService
 from app.services.access_control_service import AccessControlService
 from app.schemas.review_action import ReviewActionRequest
+from app.models.report_extraction import ReportExtraction
+from app.models.report_version import ReportVersion
+from app.models.validation_result import ValidationResult
 
 router = APIRouter(
     prefix="/reviews",
@@ -97,12 +100,37 @@ def pending_reviews(
         ])
     )
 ):
+
     from app.models.report import Report
+    from app.models.event import Event
+
+    if current_user.role == UserRole.ADMIN:
+
+        return (
+            db.query(Report)
+            .filter(
+                Report.status == "COMPLIANCE_PASSED"
+            )
+            .all()
+        )
+
+    club_ids = (
+        AccessControlService
+        .get_accessible_club_ids(
+            db,
+            current_user.id
+        )
+    )
 
     return (
         db.query(Report)
+        .join(
+            Event,
+            Report.event_id == Event.id
+        )
         .filter(
-            Report.status == "COMPLIANCE_PASSED"
+            Report.status == "COMPLIANCE_PASSED",
+            Event.club_id.in_(club_ids)
         )
         .all()
     )
@@ -118,9 +146,29 @@ def review_report_details(
         ])
     )
 ):
-    from app.models.report_extraction import ReportExtraction
-    from app.models.report_version import ReportVersion
-    from app.models.validation_result import ValidationResult
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    version = (
+        db.query(ReportVersion)
+        .filter(
+            ReportVersion.report_id == report_id
+        )
+        .order_by(
+            ReportVersion.version_no.desc()
+        )
+        .first()
+    )
 
     version = (
         db.query(ReportVersion)
@@ -177,6 +225,19 @@ def approve_report(
         ])
     )
 ):
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            request.report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
     return ReviewService.create_review(
         db=db,
         report_id=request.report_id,
@@ -196,6 +257,19 @@ def reject_report(
         ])
     )
 ):
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            request.report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
     return ReviewService.create_review(
         db=db,
         report_id=request.report_id,

@@ -6,7 +6,7 @@ from app.services.report_service import ReportService
 from app.services.template_guided_mapper import TemplateGuidedMapper
 from app.services.template_service import TemplateService
 from app.services.validation_result_service import ValidationResultService
-
+from app.services.feedback_service import FeedbackService
 
 class ReportPipelineService:
 
@@ -71,6 +71,13 @@ class ReportPipelineService:
                 db,
                 report.id,
                 "CORRECTION_REQUIRED"
+            )
+
+            feedback_bundle = (
+                FeedbackService.generate_feedback_bundle(
+                    db,
+                    validation_result.id
+                )
             )
 
         return {

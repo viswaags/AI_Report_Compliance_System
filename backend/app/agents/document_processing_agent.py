@@ -1,0 +1,41 @@
+from app.models.template import Template
+from app.services.raw_extraction_builder import RawExtractionBuilder
+from app.services.template_guided_mapper import TemplateGuidedMapper
+
+
+class DocumentProcessingAgent:
+
+    @staticmethod
+    def process(
+        db,
+        report,
+        file_path
+    ):
+
+        template = (
+            db.query(Template)
+            .filter(
+                Template.id == report.template_id
+            )
+            .first()
+        )
+
+        raw_extraction = (
+            RawExtractionBuilder.build(
+                file_path
+            )
+        )
+
+        canonical_report_model = (
+            TemplateGuidedMapper.map(
+                template.schema_json,
+                raw_extraction
+            )
+        )
+
+        return {
+            "raw_extraction":
+                raw_extraction,
+            "canonical_report_model":
+                canonical_report_model
+        }

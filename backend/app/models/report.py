@@ -44,3 +44,9 @@ class Report(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+    created_by = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False
+    )

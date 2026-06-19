@@ -23,6 +23,9 @@ from app.api.event_records import (
 from app.api.google_drive import (
     router as google_drive_router
 )
+from app.api.dashboard import (
+    router as dashboard_router
+)
 
 app = FastAPI(
     title="AI Report Compliance System"
@@ -50,7 +53,9 @@ app.include_router(
 app.include_router(
     google_drive_router
 )
-
+app.include_router(
+    dashboard_router
+)
 
 @app.get("/")
 def root():

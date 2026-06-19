@@ -7,6 +7,9 @@ from app.models.feedback import Feedback
 from app.models.report import Report
 from app.models.report_version import ReportVersion
 from app.models.validation_result import ValidationResult
+from app.services.email_service import EmailService
+from app.models.club_membership import ClubMembership
+from app.models.user import User, UserRole
 
 
 class FeedbackService:
@@ -61,6 +64,22 @@ class FeedbackService:
             FeedbackService._model_dict(report),
             FeedbackService._model_dict(event)
         )
+
+        student_emails = (
+            FeedbackService
+            .get_student_representative_emails(
+                db,
+                report.id
+            )
+        )
+
+        if student_emails:
+
+            EmailService.send_email(
+                recipients=student_emails,
+                subject=email_draft["email_subject"],
+                body=email_draft["email_body"]
+            )
 
         return {
             "feedback": feedback.feedback_text,
@@ -161,3 +180,87 @@ class FeedbackService:
             column.name: getattr(model, column.name)
             for column in model.__table__.columns
         }
+    
+    @staticmethod
+    def get_student_representative_emails(
+        db,
+        report_id
+    ):
+        from app.models.report import Report
+        from app.models.event import Event
+
+        report = (
+            db.query(Report)
+            .filter(Report.id == report_id)
+            .first()
+        )
+
+        if not report:
+            return []
+
+        event = (
+            db.query(Event)
+            .filter(Event.id == report.event_id)
+            .first()
+        )
+
+        if not event:
+            return []
+
+        memberships = (
+            db.query(ClubMembership)
+            .filter(
+                ClubMembership.club_id == event.club_id,
+                ClubMembership.role == UserRole.STUDENT_REPRESENTATIVE,
+                ClubMembership.is_active == True
+            )
+            .all()
+        )
+
+        emails = []
+
+        for membership in memberships:
+
+            user = (
+                db.query(User)
+                .filter(User.id == membership.user_id)
+                .first()
+            )
+
+            if user:
+                emails.append(user.email)
+
+        return emails
+    
+    @staticmethod
+    def send_feedback_email(
+        db,
+        report_id
+    ):
+        email_draft = (
+            FeedbackService
+            .latest_email_draft_for_report(
+                db,
+                report_id
+            )
+        )
+
+        if not email_draft:
+            return
+
+        recipients = (
+            FeedbackService
+            .get_student_representative_emails(
+                db,
+                report_id
+            )
+        )
+
+        if not recipients:
+            return
+
+        EmailService.send_email(
+            recipients=recipients,
+            subject=email_draft["email_subject"],
+            body=email_draft["email_body"]
+        )

@@ -67,8 +67,19 @@ class RecordManagementService:
             participant_count = (
                 canonical
                 .get("event_information_table", {})
+                .get("fields", {})
                 .get("number_of_participants")
             )
+
+            if participant_count:
+
+                try:
+                    participant_count = int(
+                        str(participant_count).strip()
+                    )
+
+                except ValueError:
+                    participant_count = None
 
         record = EventRecord(
             club_id=event.club_id,

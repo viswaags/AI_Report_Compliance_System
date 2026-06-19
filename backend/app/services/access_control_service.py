@@ -67,3 +67,21 @@ class AccessControlService:
             user_id,
             report.event_id
         )
+    @staticmethod
+    def get_accessible_club_ids(
+        db,
+        user_id
+    ):
+        memberships = (
+            db.query(ClubMembership)
+            .filter(
+                ClubMembership.user_id == user_id,
+                ClubMembership.is_active == True
+            )
+            .all()
+        )
+
+        return [
+            m.club_id
+            for m in memberships
+        ]

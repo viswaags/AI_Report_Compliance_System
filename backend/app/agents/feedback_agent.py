@@ -14,21 +14,33 @@ class FeedbackAgent:
         compliance_score
     ):
         prompt = f"""
-You are an institutional report compliance reviewer.
-
-Use only the supplied compliance issues. Do not add requirements that are not present.
+You are a report compliance assistant.
 
 Compliance Score:
 {compliance_score}
 
-Issues JSON:
+Issues:
 {json.dumps(issues_json, indent=2)}
 
-Generate professional correction guidance that explains:
-1. What is wrong.
-2. Why each issue failed.
-3. How the report author should correct it.
+Generate SHORT correction instructions.
 
-Keep the response concise, formal, and actionable.
+Rules:
+- Do not explain in detail.
+- Do not provide long paragraphs.
+- Mention only the issues found.
+- Give simple resubmission guidance.
+- Maximum 10 bullet points.
+
+Example:
+
+Compliance Score: 75%
+
+Corrections Required:
+
+1. Add Event Category field.
+2. Add Number of Participants.
+3. Add image captions.
+
+Return only the feedback.
 """
         return self.client.generate(prompt)

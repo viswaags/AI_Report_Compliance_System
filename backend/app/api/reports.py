@@ -123,7 +123,8 @@ def submit_report(
         event_id=event_id,
         template_id=template_id,
         status="VALIDATING",
-        current_version=1
+        current_version=1,
+        created_by=current_user.id
     )
 
     db.add(report)
@@ -264,6 +265,21 @@ def resubmit_report(
         "validation":
             pipeline_result["validation"]
     }
+
+@router.get("/my-reports")
+def get_my_reports(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    reports = (
+        db.query(Report)
+        .filter(
+            Report.created_by == current_user.id
+        )
+        .all()
+    )
+
+    return reports
 
 @router.get("/{report_id}/compliance")
 def get_report_compliance(
