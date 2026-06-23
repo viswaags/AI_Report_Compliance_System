@@ -25,3 +25,8 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class BulkAssignMembershipRequest(BaseModel):
+    user_id: int
+    club_ids: list[int]
+    role: UserRole

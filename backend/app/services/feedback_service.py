@@ -33,7 +33,7 @@ class FeedbackService:
         feedback = Feedback(
             validation_result_id=validation_result.id,
             feedback_text=feedback_text,
-            model_used="gemini-2.5-flash"
+            model_used="openrouter/free"
         )
 
         db.add(feedback)

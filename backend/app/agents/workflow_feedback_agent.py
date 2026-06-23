@@ -2,6 +2,8 @@ from app.agents.feedback_agent import (
     FeedbackAgent
 )
 
+from app.models.feedback import Feedback
+
 
 class WorkflowFeedbackAgent:
 
@@ -10,7 +12,7 @@ class WorkflowFeedbackAgent:
 
         validation = state["validation"]
 
-        feedback = (
+        feedback_text = (
             FeedbackAgent()
             .generate_feedback(
                 validation["issues_json"],
@@ -18,6 +20,25 @@ class WorkflowFeedbackAgent:
             )
         )
 
-        state["feedback"] = feedback
+        feedback_record = Feedback(
+            validation_result_id=
+                state["validation_result"].id,
+
+            feedback_text=
+                feedback_text,
+
+            model_used=
+                "openrouter/free"
+        )
+
+        db = state["db"]
+
+        db.add(feedback_record)
+
+        db.commit()
+
+        db.refresh(feedback_record)
+
+        state["feedback"] = feedback_text
 
         return state

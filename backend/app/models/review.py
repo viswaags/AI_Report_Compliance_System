@@ -26,6 +26,12 @@ class Review(Base):
         nullable=False
     )
 
+    report_version_id = Column(
+        Integer,
+        ForeignKey("report_versions.id"),
+        nullable=False
+    )
+
     reviewer_id = Column(
         Integer,
         ForeignKey("users.id"),

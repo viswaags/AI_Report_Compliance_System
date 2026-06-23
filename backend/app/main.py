@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.database.db import engine
@@ -26,9 +27,25 @@ from app.api.google_drive import (
 from app.api.dashboard import (
     router as dashboard_router
 )
+from app.api.notifications import (
+    router as notifications_router
+)
+
+from app.api.repository import (
+    router as repository_router
+)
+from app.api import system
 
 app = FastAPI(
     title="AI Report Compliance System"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
 )
 
 app.include_router(users_router)
@@ -56,6 +73,16 @@ app.include_router(
 app.include_router(
     dashboard_router
 )
+app.include_router(
+    notifications_router
+)
+app.include_router(
+    repository_router
+)
+app.include_router(
+    system.router
+)
+
 
 @app.get("/")
 def root():

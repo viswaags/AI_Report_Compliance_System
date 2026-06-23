@@ -1,12 +1,11 @@
 from app.models.report import Report
 from app.models.review import Review
-from app.services.record_management_service import (
-    RecordManagementService
-)
+
 from app.models.event import Event
 from app.models.club_membership import ClubMembership
 from app.models.user import User, UserRole
 from app.services.email_service import EmailService
+from app.models.report_version import ReportVersion
 
 
 class ReviewService:
@@ -40,14 +39,45 @@ class ReviewService:
 
         if status not in {
             "APPROVED",
-            "REJECTED"
+            "REVISION_REQUIRED"
         }:
             raise ValueError(
-                "Status must be APPROVED or REJECTED"
+                "Status must be APPROVED or REVISION_REQUIRED"
+            )
+        
+        latest_version = (
+            db.query(ReportVersion)
+            .filter(
+                ReportVersion.report_id == report_id
+            )
+            .order_by(
+                ReportVersion.version_no.desc()
+            )
+            .first()
+        )
+
+        if not latest_version:
+            raise ValueError(
+                "Report version not found"
+            )
+
+        existing_review = (
+            db.query(Review)
+            .filter(
+                Review.report_version_id ==
+                latest_version.id
+            )
+            .first()
+        )
+
+        if existing_review:
+            raise ValueError(
+                "This report version has already been reviewed"
             )
 
         review = Review(
             report_id=report_id,
+            report_version_id=latest_version.id,
             reviewer_id=reviewer_id,
             status=status,
             comments=comments
@@ -59,12 +89,32 @@ class ReviewService:
         db.commit()
         db.refresh(review)
 
-        if status == "APPROVED":
+        return review
 
+        '''event = (
+            db.query(Event)
+            .filter(
+                Event.id == report.event_id
+            )
+            .first()
+        )
+
+        if status == "APPROVED":
+            
             RecordManagementService.create_event_record(
                 db=db,
                 report_id=report_id,
                 approved_by=reviewer_id
+            )
+
+            NotificationService.create_notification(
+                db=db,
+                user_id=report.created_by,
+                title="Report Approved",
+                message=(
+                    f"Report for '{event.event_title}' has been approved."
+                ),
+                notification_type="REVIEW"
             )
 
             ReviewService.send_acceptance_email(
@@ -73,18 +123,28 @@ class ReviewService:
                 comments=comments
             )
 
-        elif status == "REJECTED":
+        elif status == "REVISION_REQUIRED":
 
-            ReviewService.send_rejection_email(
+            NotificationService.create_notification(
+                db=db,
+                user_id=report.created_by,
+                title="Report Revisions Required",
+                message=(
+                    f"Report for '{event.event_title}' was reviewed and revisions are required."
+                ),
+                notification_type="REVIEW"
+            )
+
+            ReviewService.send_revision_required_email(
                 db=db,
                 report=report,
                 comments=comments
             )
 
-        return review
+        return review'''
     
     @staticmethod
-    def send_rejection_email(
+    def send_revision_required_email(
         db,
         report,
         comments
@@ -126,10 +186,10 @@ class ReviewService:
 
         EmailService.send_email(
             recipients=recipients,
-            subject=f"Report Rejected - {event.event_title}",
+            subject=f"Report Revisions Required - {event.event_title}",
             body=(
                 f"Your report for '{event.event_title}' "
-                f"has been rejected.\n\n"
+                f"has been reviewed and revisions are required.\n\n"
                 f"Comments:\n{comments}\n\n"
                 f"Please revise and resubmit.\n\n"
                 f"Regards,\n"

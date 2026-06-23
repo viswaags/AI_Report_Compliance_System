@@ -26,12 +26,14 @@ class ReportVersionService:
         db,
         report_id,
         version_no,
+        template_id,
         file_path
     ):
 
         version = ReportVersion(
             report_id=report_id,
             version_no=version_no,
+            template_id=template_id,
             drive_file_id=None,
             file_path=file_path
         )

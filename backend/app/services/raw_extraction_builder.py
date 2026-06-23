@@ -91,7 +91,9 @@ class RawExtractionBuilder:
                 })
 
         tables = RawExtractionBuilder._extract_pdf_tables(file_path)
-        captions = RawExtractionBuilder._extract_captions("\n".join(full_text_parts))
+        captions = RawExtractionBuilder._extract_captions(
+            "\n".join(full_text_parts)
+        )
         location_captions = RawExtractionBuilder._extract_captions_below_images(
             images,
             text_blocks
@@ -126,11 +128,19 @@ class RawExtractionBuilder:
                 continue
 
             text_parts.append(text)
+            zone = None
+
+            if index <= 2:
+                zone = "top_center"
+
+            elif index >= max(0, len(document.paragraphs) - 3):
+                zone = "bottom_left"
+
             paragraphs.append({
                 "text": text,
                 "order": index,
                 "page_number": None,
-                "zone": None,
+                "zone": zone,
             })
 
         tables = []
@@ -155,6 +165,23 @@ class RawExtractionBuilder:
             })
 
         captions = RawExtractionBuilder._extract_captions("\n".join(text_parts))
+
+        if not captions:
+
+            for paragraph in paragraphs:
+
+                text = paragraph.get("text", "")
+
+                zone = paragraph.get("zone")
+
+                if (
+                    zone is None
+                    and 2 <= len(text.split()) <= 10
+                    and "coordinator" not in text.lower()
+                    and "principal" not in text.lower()
+                ):
+                    captions.append(text)
+
         images = []
         try:
             image_count = len(document.inline_shapes)
@@ -162,18 +189,31 @@ class RawExtractionBuilder:
             image_count = 0
 
         for index in range(image_count):
+
+            zone = None
+
+            if index == 0:
+                zone = "top_left"
+
+            elif index == 1:
+                zone = "top_right"
+
             images.append({
                 "page_number": None,
                 "image_index": index,
                 "location": None,
-                "zone": None,
-                "caption": captions[index] if index < len(captions) else None,
+                "zone": zone,
+                "caption": (
+                    captions[index]
+                    if index < len(captions)
+                    else None
+                ),
             })
 
         return {
             "model_type": "raw_extraction",
             "file_type": "docx",
-            "page_count": 1,
+            "page_count": None,
             "text": "\n".join(text_parts),
             "text_blocks": [],
             "paragraphs": paragraphs,
@@ -267,7 +307,10 @@ class RawExtractionBuilder:
     def _extract_captions_below_images(images, text_blocks):
         captions = []
         signature_pattern = re.compile(
-            r"\b(?:faculty|club)\s+co-?ordinator\b|\bprincipal\b",
+            r"\b(?:faculty|club)\s+co-?ordinator\b"
+            r"|\bprincipal\b"
+            r"|\bsecretary\b"
+            r"|\bjoint secretary\b",
             re.IGNORECASE
         )
 

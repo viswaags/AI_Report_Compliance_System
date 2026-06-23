@@ -1,6 +1,12 @@
 from app.models.template import Template
-from app.services.raw_extraction_builder import RawExtractionBuilder
-from app.services.template_guided_mapper import TemplateGuidedMapper
+
+from app.services.raw_extraction_builder import (
+    RawExtractionBuilder
+)
+
+from app.services.template_guided_mapper import (
+    TemplateGuidedMapper
+)
 
 
 class DocumentProcessingAgent:
@@ -20,6 +26,11 @@ class DocumentProcessingAgent:
             .first()
         )
 
+        if not template:
+            raise ValueError(
+                "Template not found"
+            )
+
         raw_extraction = (
             RawExtractionBuilder.build(
                 file_path
@@ -36,6 +47,28 @@ class DocumentProcessingAgent:
         return {
             "raw_extraction":
                 raw_extraction,
+
             "canonical_report_model":
                 canonical_report_model
         }
+
+    @staticmethod
+    def run(state):
+
+        result = (
+            DocumentProcessingAgent.process(
+                state["db"],
+                state["report"],
+                state["file_path"]
+            )
+        )
+
+        state["raw_extraction"] = (
+            result["raw_extraction"]
+        )
+
+        state["canonical_report_model"] = (
+            result["canonical_report_model"]
+        )
+
+        return state

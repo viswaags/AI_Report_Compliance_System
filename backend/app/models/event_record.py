@@ -35,7 +35,8 @@ class EventRecord(Base):
     report_id = Column(
         Integer,
         ForeignKey("reports.id"),
-        nullable=False
+        nullable=False,
+        unique=True
     )
 
     event_title = Column(
@@ -50,6 +51,10 @@ class EventRecord(Base):
     event_date = Column(
         String
     )
+
+    coordinators_organizers = Column(String)
+
+    venue = Column(String)
 
     participant_count = Column(
         Integer

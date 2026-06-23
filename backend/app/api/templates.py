@@ -40,6 +40,16 @@ from app.services.google_drive_folder_service import (
     GoogleDriveFolderService
 )
 
+from app.services.template_workflow_runner_service import (
+    TemplateWorkflowRunnerService
+)
+
+from app.services.template_version_service import (
+    TemplateVersionService
+)
+
+from app.models.report import Report
+
 
 router = APIRouter(
     prefix="/templates",
@@ -139,7 +149,7 @@ async def upload_template(
         )
     )
 
-    schema_json = (
+    '''schema_json = (
         TemplateAnalyzer.analyze_file(
             file_path=file_path,
             version=version
@@ -151,7 +161,18 @@ async def upload_template(
         version=version,
         schema_json=schema_json,
         drive_file_id=drive_file_id
+    )'''
+
+    workflow_result = (
+        TemplateWorkflowRunnerService.run(
+            db=db,
+            file_path=file_path,
+            version=version,
+            drive_file_id=drive_file_id
+        )
     )
+
+    return workflow_result["template"]
 
 
 @router.post(
@@ -227,3 +248,73 @@ def get_templates(
         db.query(Template)
         .all()
     )
+
+@router.get("/current")
+def get_current_template(
+    db: Session = Depends(get_db)
+):
+
+    template = (
+        TemplateService
+        .get_latest_template(db)
+    )
+
+    if not template:
+        raise HTTPException(
+            status_code=404,
+            detail="No template found"
+        )
+
+    drive_url = None
+
+    if template.drive_file_id:
+        drive_url = (
+            GoogleDriveService
+            .get_file_url(
+                template.drive_file_id
+            )
+        )
+
+    return {
+        "template_id": template.id,
+        "version": template.version,
+        "drive_file_id": template.drive_file_id,
+        "drive_url": drive_url,
+        "schema_json": template.schema_json
+    }
+
+@router.get("/impact-analysis")
+def template_impact_analysis(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(UserRole.ADMIN)
+    )
+):
+
+    latest_template = (
+        TemplateVersionService
+        .get_latest_template(db)
+    )
+
+    if not latest_template:
+
+        return {
+            "outdated_reports": 0
+        }
+
+    outdated_reports = (
+        db.query(Report)
+        .filter(
+            Report.template_id !=
+            latest_template.id
+        )
+        .count()
+    )
+
+    return {
+        "latest_template":
+            latest_template.version,
+
+        "outdated_reports":
+            outdated_reports
+    }

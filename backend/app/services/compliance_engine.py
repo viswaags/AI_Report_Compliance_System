@@ -131,24 +131,40 @@ class ComplianceEngine:
         }
 
     @staticmethod
-    def _validate_page_count(template_schema, report_model):
-        exact_pages = template_schema.get("page_constraints", {}).get("exact_pages")
-        if exact_pages is None:
+    def _validate_page_count(
+        template_schema,
+        report_model
+    ):
+        max_pages = (
+            template_schema
+            .get("page_constraints", {})
+            .get("max_pages")
+        )
+
+        if max_pages is None:
             return []
 
         actual = report_model.get("page_count")
+
+        if actual is None:
+            return []
+
         return [
             ComplianceEngine._finding(
-                rule_id="PAGE_EXACT_COUNT",
+                rule_id="PAGE_LIMIT",
                 category="PAGE_VALIDATION",
                 severity="HIGH",
-                status="PASSED" if actual == exact_pages else "FAILED",
-                expected=exact_pages,
-                actual=actual,
+                status=(
+                    "PASSED"
+                    if actual <= max_pages
+                    else "FAILED"
+                ),
+                expected=f"Maximum {max_pages} page(s)",
+                actual=f"{actual} page(s)",
                 message=(
-                    f"Report has exactly {exact_pages} page(s)"
-                    if actual == exact_pages
-                    else f"Report must be exactly {exact_pages} page(s)"
+                    f"Report page count is within limit"
+                    if actual <= max_pages
+                    else f"Report exceeds maximum page limit"
                 )
             )
         ]
@@ -243,7 +259,7 @@ class ComplianceEngine:
                 severity="HIGH",
                 status="PASSED" if present or not required else "FAILED",
                 expected="Report title present" if required else "Report title optional",
-                actual=title_model.get("text"),
+                actual=title_model.get("text") or "Missing",
                 message=(
                     "Report title is present"
                     if present or not required
@@ -319,7 +335,7 @@ class ComplianceEngine:
 
             value = fields.get(field)
             has_value = ComplianceEngine._has_value(value)
-            present = field in fields and has_value
+            present = has_value
             findings.append(
                 ComplianceEngine._finding(
                     rule_id=f"EVENT_TABLE_FIELD_{field.upper()}_PRESENT",
@@ -408,7 +424,10 @@ class ComplianceEngine:
             return []
 
         findings = []
-        count = images_model.get("count", 0)
+        count = images_model.get(
+            "non_header_count",
+            images_model.get("count", 0)
+        )
         min_images = images_schema.get("min_images", 0)
         max_images = images_schema.get("max_images")
         valid_min = count >= min_images
@@ -491,6 +510,10 @@ class ComplianceEngine:
 
             expected_position = config.get("position")
             actual_position = model_element.get("zone")
+            # This may be added in wrong place.
+            if not actual_position:
+                actual_position = "unknown"
+
             if expected_position and model_element.get("present"):
                 findings.append(
                     ComplianceEngine._finding(

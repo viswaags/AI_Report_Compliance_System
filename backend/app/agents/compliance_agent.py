@@ -1,7 +1,12 @@
 from app.models.template import Template
 
-from app.services.compliance_engine import ComplianceEngine
-from app.services.template_service import TemplateService
+from app.services.compliance_engine import (
+    ComplianceEngine
+)
+
+from app.services.template_service import (
+    TemplateService
+)
 
 
 class ComplianceAgent:
@@ -21,10 +26,14 @@ class ComplianceAgent:
             .first()
         )
 
-        latest_template = (
-            TemplateService.get_latest_template(
-                db
+        if not template:
+            raise ValueError(
+                "Template not found"
             )
+
+        latest_template = (
+            TemplateService
+            .get_latest_template(db)
         )
 
         latest_template_check = (
@@ -40,6 +49,20 @@ class ComplianceAgent:
             )
         )
 
+    @staticmethod
+    def run(state):
+
+        validation = (
+            ComplianceAgent.validate(
+                state["db"],
+                state["report"],
+                state["canonical_report_model"]
+            )
+        )
+
+        state["validation"] = validation
+
+        return state
 '''
 from app.models.template import Template
 

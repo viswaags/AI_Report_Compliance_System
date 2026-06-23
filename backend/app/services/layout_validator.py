@@ -1,3 +1,7 @@
+from app.models.canonical_template_schema import (
+    ZONE_RANGES
+)
+
 class LayoutValidator:
 
     @staticmethod
@@ -9,6 +13,7 @@ class LayoutValidator:
         zones = (
             layout_rules.get("zones")
             or template_schema.get("layout", {}).get("zones", {})
+            or ZONE_RANGES
         )
         field_rules = LayoutValidator._collect_field_layout_rules(template_schema)
 
@@ -33,6 +38,11 @@ class LayoutValidator:
             location = report_data.get("field_locations", {}).get(field)
 
             if not location:
+
+                if rule.get("optional", False):
+                    passed_checks += 1
+                    continue
+
                 issues.append({
                     "type": "layout_location_missing",
                     "field": field,
@@ -91,7 +101,7 @@ class LayoutValidator:
                 }
             },
             "layout_rules": {
-                "zones": {}
+                "zones": ZONE_RANGES
             }
         }
 
@@ -157,6 +167,12 @@ class LayoutValidator:
         page = rule.get("page") or zone.get("page")
         if page and location.get("page_number") != page:
             return False
+        
+        if (
+            location.get("page_width") is None
+            or location.get("page_height") is None
+        ):
+            return True
 
         page_width = location.get("page_width") or 1
         page_height = location.get("page_height") or 1
@@ -194,7 +210,12 @@ class LayoutValidator:
 
     @staticmethod
     def _normalize(value):
-        value = float(value)
+
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return 0
+
         return value / 100 if value > 1 else value
 
     @staticmethod

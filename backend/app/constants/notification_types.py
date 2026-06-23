@@ -1,0 +1,15 @@
+class NotificationType:
+
+    SYSTEM = "SYSTEM"
+
+    REVIEW = "REVIEW"
+
+    COMPLIANCE = "COMPLIANCE"
+
+    TEMPLATE = "TEMPLATE"
+
+    MEMBERSHIP = "MEMBERSHIP"
+
+    USER = "USER"
+
+    REPORT = "REPORT"

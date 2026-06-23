@@ -12,6 +12,9 @@ from app.schemas.review_action import ReviewActionRequest
 from app.models.report_extraction import ReportExtraction
 from app.models.report_version import ReportVersion
 from app.models.validation_result import ValidationResult
+from app.services.review_workflow_runner_service import ReviewWorkflowRunnerService
+from app.auth.dependencies import get_current_user
+from app.models.report import Report
 
 router = APIRouter(
     prefix="/reviews",
@@ -26,7 +29,6 @@ def create_review(
     current_user: User = Depends(
         require_role([
             UserRole.ADMIN,
-            UserRole.FACULTY_REPRESENTATIVE,
             UserRole.CLUB_COORDINATOR,
         ])
     )
@@ -86,9 +88,50 @@ def create_review(
 
 @router.get("/")
 def get_reviews(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role([
+            UserRole.ADMIN,
+            UserRole.CLUB_COORDINATOR,
+            UserRole.FACULTY_REPRESENTATIVE,
+            UserRole.STUDENT_REPRESENTATIVE
+        ])
+    )
 ):
-    return db.query(Review).all()
+
+    from app.models.report import Report
+    from app.models.event import Event
+
+    if current_user.role == UserRole.ADMIN:
+
+        return (
+            db.query(Review)
+            .all()
+        )
+
+    club_ids = (
+        AccessControlService
+        .get_accessible_club_ids(
+            db,
+            current_user.id
+        )
+    )
+
+    return (
+        db.query(Review)
+        .join(
+            Report,
+            Review.report_id == Report.id
+        )
+        .join(
+            Event,
+            Report.event_id == Event.id
+        )
+        .filter(
+            Event.club_id.in_(club_ids)
+        )
+        .all()
+    )
 
 @router.get("/pending")
 def pending_reviews(
@@ -103,10 +146,15 @@ def pending_reviews(
 
     from app.models.report import Report
     from app.models.event import Event
+    from app.models.report_version import ReportVersion
+
+    from app.services.google_drive_service import (
+        GoogleDriveService
+    )
 
     if current_user.role == UserRole.ADMIN:
 
-        return (
+        reports = (
             db.query(Report)
             .filter(
                 Report.status == "COMPLIANCE_PASSED"
@@ -114,26 +162,94 @@ def pending_reviews(
             .all()
         )
 
-    club_ids = (
-        AccessControlService
-        .get_accessible_club_ids(
-            db,
-            current_user.id
-        )
-    )
+    else:
 
-    return (
-        db.query(Report)
-        .join(
-            Event,
-            Report.event_id == Event.id
+        club_ids = (
+            AccessControlService
+            .get_accessible_club_ids(
+                db,
+                current_user.id
+            )
         )
-        .filter(
-            Report.status == "COMPLIANCE_PASSED",
-            Event.club_id.in_(club_ids)
+
+        reports = (
+            db.query(Report)
+            .join(
+                Event,
+                Report.event_id == Event.id
+            )
+            .filter(
+                Report.status == "COMPLIANCE_PASSED",
+                Event.club_id.in_(club_ids)
+            )
+            .all()
         )
-        .all()
-    )
+
+    response = []
+
+    for report in reports:
+
+        event = (
+            db.query(Event)
+            .filter(
+                Event.id == report.event_id
+            )
+            .first()
+        )
+
+        latest_version = (
+            db.query(ReportVersion)
+            .filter(
+                ReportVersion.report_id == report.id
+            )
+            .order_by(
+                ReportVersion.version_no.desc()
+            )
+            .first()
+        )
+
+        drive_url = None
+
+        if (
+            latest_version
+            and latest_version.drive_file_id
+        ):
+            drive_url = (
+                GoogleDriveService
+                .get_file_url(
+                    latest_version.drive_file_id
+                )
+            )
+
+        response.append(
+            {
+                "report_id": report.id,
+
+                "event_title":
+                    event.event_title
+                    if event else None,
+
+                "event_date":
+                    event.event_date
+                    if event else None,
+
+                "club_id":
+                    event.club_id
+                    if event else None,
+
+                "current_version":
+                    latest_version.version_no
+                    if latest_version else None,
+
+                "status":
+                    report.status,
+
+                "drive_url":
+                    drive_url
+            }
+        )
+
+    return response
 
 @router.get("/report/{report_id}")
 def review_report_details(
@@ -146,6 +262,9 @@ def review_report_details(
         ])
     )
 ):
+    from app.services.google_drive_service import (
+        GoogleDriveService
+    )
 
     if current_user.role != UserRole.ADMIN:
 
@@ -158,17 +277,6 @@ def review_report_details(
                 status_code=403,
                 detail="No access to this report"
             )
-
-    version = (
-        db.query(ReportVersion)
-        .filter(
-            ReportVersion.report_id == report_id
-        )
-        .order_by(
-            ReportVersion.version_no.desc()
-        )
-        .first()
-    )
 
     version = (
         db.query(ReportVersion)
@@ -206,12 +314,35 @@ def review_report_details(
         .first()
     )
 
+    drive_url = None
+
+    if version.drive_file_id:
+
+        drive_url = (
+            GoogleDriveService
+            .get_file_url(
+                version.drive_file_id
+            )
+        )
+
     return {
         "report_id": report_id,
-        "version": version,
+
+        "drive_file_id":
+            version.drive_file_id,
+
+        "drive_url":
+            drive_url,
+
+        "version":
+            version,
+
         "extraction":
-            extraction.extracted_json if extraction else None,
-        "validation": validation
+            extraction.extracted_json
+            if extraction else None,
+
+        "validation":
+            validation
     }
 
 @router.post("/approve")
@@ -238,16 +369,27 @@ def approve_report(
                 detail="No access to this report"
             )
 
+    workflow_result = ReviewWorkflowRunnerService.run(
+        db=db,
+        report_id=request.report_id,
+        reviewer_id=current_user.id,
+        review_status="APPROVED",
+        comments=request.comments
+    )
+
+    return workflow_result["review"]
+
+    '''
     return ReviewService.create_review(
         db=db,
         report_id=request.report_id,
         reviewer_id=current_user.id,
         status="APPROVED",
         comments=request.comments
-    )
+    )'''
 
-@router.post("/reject")
-def reject_report(
+@router.post("/revision-required")
+def request_revision(
     request: ReviewActionRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(
@@ -269,11 +411,125 @@ def reject_report(
                 status_code=403,
                 detail="No access to this report"
             )
+        
+    workflow_result = ReviewWorkflowRunnerService.run(
+        db=db,
+        report_id=request.report_id,
+        reviewer_id=current_user.id,
+        review_status="REVISION_REQUIRED",
+        comments=request.comments
+    )
 
+    return workflow_result["review"]
+
+    '''
     return ReviewService.create_review(
         db=db,
         report_id=request.report_id,
         reviewer_id=current_user.id,
-        status="REJECTED",
+        status="REVISION_REQUIRED",
         comments=request.comments
+    )'''
+
+@router.get("/stats")
+def review_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role([
+            UserRole.ADMIN,
+            UserRole.CLUB_COORDINATOR
+        ])
     )
+):
+
+    pending = (
+        db.query(Report)
+        .filter(
+            Report.status ==
+            "COMPLIANCE_PASSED"
+        )
+        .count()
+    )
+
+    approved = (
+        db.query(Report)
+        .filter(
+            Report.status ==
+            "APPROVED"
+        )
+        .count()
+    )
+
+    revision_required = (
+        db.query(Report)
+        .filter(
+            Report.status ==
+            "REVISION_REQUIRED"
+        )
+        .count()
+    )
+
+    return {
+        "pending_reviews":
+            pending,
+
+        "approved":
+            approved,
+
+        "revision_required":
+            revision_required
+    }
+
+@router.get("/report/{report_id}/history")
+def review_history(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    return (
+        db.query(Review)
+        .join(
+            ReportVersion,
+            Review.report_version_id ==
+            ReportVersion.id
+        )
+        .filter(
+            ReportVersion.report_id ==
+            report_id
+        )
+        .order_by(
+            Review.id.desc()
+        )
+        .all()
+    )
+
+@router.get("/report/{report_id}/latest")
+def latest_review(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    review = (
+        db.query(Review)
+        .join(
+            ReportVersion,
+            Review.report_version_id ==
+            ReportVersion.id
+        )
+        .filter(
+            ReportVersion.report_id ==
+            report_id
+        )
+        .order_by(
+            Review.id.desc()
+        )
+        .first()
+    )
+
+    return review

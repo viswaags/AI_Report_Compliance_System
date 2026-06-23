@@ -5,9 +5,12 @@ from sqlalchemy import (
     ForeignKey,
     DateTime
 )
+
 from sqlalchemy.sql import func
 
 from app.database.db import Base
+
+from sqlalchemy import UniqueConstraint
 
 
 class Event(Base):
@@ -45,4 +48,13 @@ class Event(Base):
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "club_id",
+            "event_title",
+            "event_date",
+            name="uq_event"
+        ),
     )

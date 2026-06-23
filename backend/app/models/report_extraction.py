@@ -21,7 +21,8 @@ class ReportExtraction(Base):
 
     report_version_id = Column(
         Integer,
-        ForeignKey("report_versions.id")
+        ForeignKey("report_versions.id"),
+        unique=True
     )
 
     extracted_json = Column(

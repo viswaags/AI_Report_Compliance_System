@@ -210,7 +210,16 @@ class TemplateGuidedMapper:
                     continue
 
                 mapped_order.append(key)
-                mapped_fields[key] = row.get("value")
+                value = row.get("value")
+
+                if not value:
+
+                    cells = row.get("cells", [])
+
+                    if len(cells) >= 2:
+                        value = cells[-1]
+
+                mapped_fields[key] = value
                 field_sources[key] = label
 
         for key in field_order:
@@ -290,9 +299,15 @@ class TemplateGuidedMapper:
             if image.get("caption")
         ]
 
+        caption_count = len(captions)
+        all_images_have_captions = (
+            len(images) > 0
+            and caption_count == len(images)
+        )
+
         return {
             "count": len(images),
-            "caption_present": bool(captions),
+            "caption_present": all_images_have_captions,
             "captions": captions,
             "items": images,
         }
@@ -306,11 +321,12 @@ class TemplateGuidedMapper:
             label = config.get("label") or element.replace("_", " ")
             match = TemplateGuidedMapper._find_signature_match(element, label, blocks)
             mapped[element] = {
-                "present": match is not None,
-                "label": label,
-                "zone": match.get("zone") if match else None,
-                "text": match.get("text") if match else None,
-            }
+            "present": match is not None,
+            "label": label,
+            "zone": match.get("zone") if match else None,
+            "text": match.get("text") if match else None,
+            "location": match.get("location") if match else None,
+        }
 
         return mapped
 
@@ -376,7 +392,18 @@ class TemplateGuidedMapper:
             ordered.append("event_information_table")
         if model.get("summary", {}).get("present"):
             ordered.append("summary")
-        if model.get("images", {}).get("count", 0) > 0:
+        non_header_images = [
+            image
+            for image in model.get("images", {}).get("items", [])
+            if image.get("zone")
+            not in {
+                "top_left",
+                "top_center",
+                "top_right"
+            }
+        ]
+
+        if non_header_images:
             ordered.append("images")
         if any(item.get("present") for item in model.get("signatures", {}).values()):
             ordered.append("signatures")
@@ -594,7 +621,7 @@ class TemplateGuidedMapper:
         if block_y is None:
             return True
 
-        header_bottom = 0
+        header_bottom = 120
         for element in header.get("elements", {}).values():
             text = element.get("text")
             if not text:
@@ -619,7 +646,11 @@ class TemplateGuidedMapper:
     def _looks_like_narrative_block(text):
         if re.search(r"[•●]", text or ""):
             return True
-        return len((text or "").split()) > 12
+        word_count = len((text or "").split())
+
+        return (
+            word_count > 20
+        )
 
     @staticmethod
     def _is_generic_title_label(label):

@@ -60,7 +60,7 @@ class TemplateAnalyzer:
             version=version,
             components=components,
             page_constraints={
-                "exact_pages": parsed_data.get("page_count")
+                "max_pages": parsed_data.get("page_count")
             }
         )
 
@@ -239,11 +239,30 @@ class TemplateAnalyzer:
             for line in lines
             if TemplateAnalyzer.IMAGE_PATTERN.search(line)
         ]
+
+        image_count = parsed_data.get(
+            "image_count",
+            0
+        )
+
         caption_required = any(
             re.search(r"\b(caption|figure)\b", line, re.IGNORECASE)
             for line in image_lines
         )
-        required = caption_required or bool(image_lines)
+
+        if not caption_required:
+
+            caption_required = any(
+                "image" in line.lower()
+                for line in lines
+            )
+
+        required = (
+            caption_required
+            or bool(image_lines)
+            or image_count > 0
+        )
+
         min_images, max_images = TemplateAnalyzer._extract_image_bounds(
             image_lines,
             required
@@ -481,6 +500,8 @@ class TemplateAnalyzer:
         for line in re.split(r"\n|\s{4,}", cleaned):
             line = TemplateAnalyzer._clean_text(line)
             if not line:
+                continue
+            if len(line.split()) > 5:
                 continue
             if TemplateAnalyzer.IMAGE_PATTERN.search(line):
                 continue

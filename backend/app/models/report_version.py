@@ -16,6 +16,12 @@ class ReportVersion(Base):
 
     version_no = Column(Integer)
 
+    template_id = Column(
+        Integer,
+        ForeignKey("templates.id"),
+        nullable=False
+    )
+
     drive_file_id = Column(String)
 
     file_path = Column(String)

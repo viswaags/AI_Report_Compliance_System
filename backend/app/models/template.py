@@ -9,7 +9,7 @@ class Template(Base):
     __tablename__ = "templates"
 
     id = Column(Integer, primary_key=True)
-    version = Column(String, nullable=False)
+    version = Column(String, nullable=False, unique=True)
     schema_json = Column(JSONB, nullable=False)
     drive_file_id = Column(String)
 

@@ -8,13 +8,30 @@ from app.services.google_drive_folder_service import (
     GoogleDriveFolderService
 )
 
+from fastapi import Depends
+
+from app.auth.dependencies import (
+    require_role
+)
+
+from app.models.user import (
+    User,
+    UserRole
+)
+
 router = APIRouter(
     prefix="/drive",
     tags=["Google Drive"]
 )
 
 @router.post("/initialize-repository")
-def initialize_repository():
+def initialize_repository(
+    current_user: User = Depends(
+        require_role(
+            UserRole.ADMIN
+        )
+    )
+):
 
     root = GoogleDriveFolderService.get_or_create_folder(
         "AI Report Compliance Repository"
@@ -38,7 +55,13 @@ def initialize_repository():
 
 
 @router.post("/test")
-def upload_test():
+def upload_test(
+    current_user: User = Depends(
+        require_role(
+            UserRole.ADMIN
+        )
+    )
+):
 
     file_id = (
         GoogleDriveService.upload_file(

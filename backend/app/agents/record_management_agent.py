@@ -15,8 +15,8 @@ class RecordManagementAgent:
         return (
             RecordManagementService
             .create_event_record(
-                db,
-                report_id,
-                approved_by
+                db=db,
+                report_id=report_id,
+                approved_by=approved_by
             )
         )

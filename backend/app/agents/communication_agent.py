@@ -1,3 +1,12 @@
+from app.services.email_service import (
+    EmailService
+)
+
+from app.services.notification_service import (
+    NotificationService
+)
+
+
 class CommunicationAgent:
 
     def generate_email_draft(
@@ -27,3 +36,33 @@ class CommunicationAgent:
                     "AI Report Compliance System"
                 )
         }
+
+    @staticmethod
+    def send_email(
+        recipients,
+        subject,
+        body
+    ):
+
+        EmailService.send_email(
+            recipients=recipients,
+            subject=subject,
+            body=body
+        )
+
+    @staticmethod
+    def send_notification(
+        db,
+        user_id,
+        title,
+        message,
+        notification_type="SYSTEM"
+    ):
+
+        NotificationService.create_notification(
+            db=db,
+            user_id=user_id,
+            title=title,
+            message=message,
+            notification_type=notification_type
+        )

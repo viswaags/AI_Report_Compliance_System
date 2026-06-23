@@ -24,9 +24,11 @@ class CanonicalReportModel:
                 "present": False,
                 "text": None,
                 "zone": None,
+                "location": None,
             },
             "event_information_table": {
                 "table_present": False,
+                "table_location": None,
                 "field_order": [],
                 "fields": {},
                 "field_sources": {},
@@ -36,9 +38,11 @@ class CanonicalReportModel:
                 "present": False,
                 "format": None,
                 "content": None,
+                "location": None,
             },
             "images": {
                 "count": 0,
+                "non_header_count": 0,
                 "caption_present": False,
                 "captions": [],
                 "items": [],

@@ -44,4 +44,3 @@ class EmailService:
                 msg.as_string()
             )
 
-            server.quit()

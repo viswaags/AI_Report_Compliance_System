@@ -6,6 +6,9 @@ from app.auth.security import hash_password
 from app.database.dependencies import get_db
 from app.models.user import User, UserRole
 from app.schemas.user import CreateUserRequest, UserResponse
+from app.services.notification_service import (
+    NotificationService
+)
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -59,12 +62,25 @@ def create_user(
         email=user.email,
         password_hash=hash_password(user.password),
         role=user.role,
-        is_active=True
+        is_active=True,
+        must_change_password=True
     )
 
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+
+    NotificationService.create_notification(
+        db=db,
+        user_id=db_user.id,
+        title="Account Created",
+        message=(
+            f"Your account has been created "
+            f"with role "
+            f"{db_user.role.value}."
+        ),
+        notification_type="USER"
+    )
 
     return db_user
 
@@ -75,6 +91,38 @@ def get_users(
     current_user: User = Depends(require_role(UserRole.ADMIN))
 ):
     return db.query(User).all()
+
+@router.patch("/{user_id}/activate")
+def activate_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.ADMIN
+        )
+    )
+):
+
+    user = (
+        db.query(User)
+        .filter(
+            User.id == user_id
+        )
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    user.is_active = True
+
+    db.commit()
+    db.refresh(user)
+
+    return user
 
 
 @router.patch("/{user_id}/deactivate", response_model=UserResponse)
@@ -96,3 +144,51 @@ def deactivate_user(
     db.refresh(user)
 
     return user
+
+@router.get("/role/{role}")
+def users_by_role(
+    role: UserRole,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.ADMIN
+        )
+    )
+):
+
+    return (
+        db.query(User)
+        .filter(
+            User.role == role
+        )
+        .all()
+    )
+
+
+@router.get("/{user_id}")
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.ADMIN
+        )
+    )
+):
+
+    user = (
+        db.query(User)
+        .filter(
+            User.id == user_id
+        )
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    return user
+

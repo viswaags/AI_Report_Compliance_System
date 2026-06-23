@@ -7,7 +7,12 @@ from app.database.dependencies import get_db
 from app.models.report import Report
 from app.models.report_version import ReportVersion
 from app.services.report_pipeline_service import ReportPipelineService
-
+from app.auth.dependencies import require_role
+from app.models.user import User
+from app.models.user import UserRole
+from app.services.access_control_service import (
+    AccessControlService
+)
 
 router = APIRouter(
     prefix="/compliance",
@@ -19,7 +24,14 @@ router = APIRouter(
 def validate_report(
     filename: str,
     report_version_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role([
+            UserRole.ADMIN,
+            UserRole.CLUB_COORDINATOR,
+            UserRole.STUDENT_REPRESENTATIVE
+        ])
+    )
 ):
     report_version = (
         db.query(ReportVersion)
@@ -42,6 +54,18 @@ def validate_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found"
         )
+    
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report.id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
 
     file_path = report_version.file_path or os.path.join("uploads", filename)
     if not os.path.exists(file_path):

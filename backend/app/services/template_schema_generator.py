@@ -30,7 +30,10 @@ class TemplateSchemaGenerator:
             "schema_type": "canonical_template_schema",
             "template_version": version,
             "page_constraints": {
-                "exact_pages": page_constraints.get("exact_pages")
+                "max_pages": (
+                    page_constraints.get("max_pages")
+                    or page_constraints.get("exact_pages")
+                )
             },
             "components": canonical_components,
             "document_order": [
@@ -94,7 +97,10 @@ class TemplateSchemaGenerator:
                 field_configs[field] = (
                     deepcopy(config)
                     if isinstance(config, dict)
-                    else {"required": True}
+                    else {
+                        "required": True,
+                        "label": field
+                    }
                 )
 
         return field_configs
@@ -111,7 +117,10 @@ class TemplateSchemaGenerator:
             "fields": field_configs,
             "layout_rules": {
                 "zones": deepcopy(ZONE_RANGES),
-                "page_limit": page_constraints.get("exact_pages"),
+                "page_limit": (
+                    page_constraints.get("max_pages")
+                    or page_constraints.get("exact_pages")
+                ),
                 "latest_template_required": True,
             },
             "validation_rules": {
@@ -131,6 +140,19 @@ class TemplateSchemaGenerator:
 
     @staticmethod
     def normalize_key(value):
-        normalized = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower())
-        normalized = re.sub(r"_+", "_", normalized).strip("_")
+
+        value = str(value or "")
+
+        normalized = re.sub(
+            r"[^a-zA-Z0-9]+",
+            "_",
+            value.strip().lower()
+        )
+
+        normalized = re.sub(
+            r"_+",
+            "_",
+            normalized
+        ).strip("_")
+
         return normalized or "unnamed"

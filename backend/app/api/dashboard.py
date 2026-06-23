@@ -13,12 +13,83 @@ from app.models.event_record import EventRecord
 from app.services.access_control_service import (
     AccessControlService
 )
+from sqlalchemy import func
+
+from app.services.dashboard_service import (
+    DashboardService
+)
+
+from app.auth.dependencies import get_current_user
+from app.models.notification import Notification
 
 router = APIRouter(
     prefix="/dashboard",
     tags=["Dashboard"]
 )
 
+@router.get("/recent-notifications")
+def recent_notifications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    return (
+        db.query(Notification)
+        .filter(
+            Notification.user_id ==
+            current_user.id
+        )
+        .order_by(
+            Notification.created_at.desc()
+        )
+        .limit(10)
+        .all()
+    )
+
+@router.get("/recent-reports")
+def recent_reports(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    if current_user.role == UserRole.ADMIN:
+
+        return (
+            db.query(Report)
+            .order_by(
+                Report.id.desc()
+            )
+            .limit(10)
+            .all()
+        )
+
+    club_ids = (
+        AccessControlService
+        .get_accessible_club_ids(
+            db,
+            current_user.id
+        )
+    )
+
+    return (
+        db.query(Report)
+        .join(
+            Event,
+            Report.event_id == Event.id
+        )
+        .filter(
+            Event.club_id.in_(club_ids)
+        )
+        .order_by(
+            Report.id.desc()
+        )
+        .limit(10)
+        .all()
+    )
 
 @router.get("/student")
 def student_dashboard(
@@ -30,72 +101,10 @@ def student_dashboard(
     )
 ):
 
-    reports = (
-        db.query(Report)
-        .filter(
-            Report.created_by == current_user.id
-        )
-        .order_by(
-            Report.id.desc()
-        )
-        .all()
+    return DashboardService.student_dashboard(
+        db,
+        current_user
     )
-
-    report_list = []
-
-    for report in reports:
-
-        event = (
-            db.query(Event)
-            .filter(
-                Event.id == report.event_id
-            )
-            .first()
-        )
-
-        report_list.append(
-            {
-                "report_id": report.id,
-                "event_title":
-                    event.event_title if event else None,
-                "status": report.status,
-                "current_version":
-                    report.current_version
-            }
-        )
-
-    return {
-
-        "total_reports":
-            len(reports),
-
-        "approved":
-            len([
-                r for r in reports
-                if r.status == "APPROVED"
-            ]),
-
-        "under_review":
-            len([
-                r for r in reports
-                if r.status == "UNDER_REVIEW"
-            ]),
-
-        "compliance_passed":
-            len([
-                r for r in reports
-                if r.status == "COMPLIANCE_PASSED"
-            ]),
-
-        "correction_required":
-            len([
-                r for r in reports
-                if r.status == "CORRECTION_REQUIRED"
-            ]),
-
-        "reports":
-            report_list
-    }
 
 
 @router.get("/student/status")
@@ -107,172 +116,41 @@ def student_report_status(
         )
     )
 ):
-
-    reports = (
-        db.query(Report)
-        .filter(
-            Report.created_by == current_user.id
-        )
-        .order_by(
-            Report.id.desc()
-        )
-        .all()
+    return DashboardService.student_report_status(
+        db,
+        current_user
     )
-
-    result = []
-
-    for report in reports:
-
-        event = (
-            db.query(Event)
-            .filter(
-                Event.id == report.event_id
-            )
-            .first()
-        )
-
-        result.append(
-            {
-                "report_id": report.id,
-                "event_title":
-                    event.event_title if event else None,
-                "status": report.status,
-                "version": report.current_version
-            }
-        )
-
-    return result
 
 
 @router.get("/coordinator")
 def coordinator_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_role([
-            UserRole.ADMIN,
+        require_role(
             UserRole.CLUB_COORDINATOR
-        ])
+        )
     )
 ):
 
-    if current_user.role == UserRole.ADMIN:
-
-        reports = (
-            db.query(Report)
-            .all()
-        )
-
-        pending_review_reports = []
-
-        for report in reports:
-
-            if report.status == "COMPLIANCE_PASSED":
-
-                event = (
-                    db.query(Event)
-                    .filter(
-                        Event.id == report.event_id
-                    )
-                    .first()
-                )
-
-                pending_review_reports.append(
-                    {
-                        "report_id": report.id,
-                        "event_title":
-                            event.event_title if event else None,
-                        "status": report.status
-                    }
-                )
-
-        return {
-
-            "managed_clubs":
-                db.query(Club).count(),
-
-            "pending_reviews":
-                len(pending_review_reports),
-
-            "approved_reports":
-                len([
-                    r for r in reports
-                    if r.status == "APPROVED"
-                ]),
-
-            "pending_review_reports":
-                pending_review_reports
-        }
-
-    club_ids = (
-        AccessControlService
-        .get_accessible_club_ids(
-            db,
-            current_user.id
-        )
+    return DashboardService.coordinator_dashboard(
+        db,
+        current_user
     )
 
-    events = (
-        db.query(Event)
-        .filter(
-            Event.club_id.in_(club_ids)
+@router.get("/faculty")
+def faculty_dashboard(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(
+            UserRole.FACULTY_REPRESENTATIVE
         )
-        .all()
     )
+):
 
-    event_ids = [
-        event.id
-        for event in events
-    ]
-
-    reports = (
-        db.query(Report)
-        .filter(
-            Report.event_id.in_(event_ids)
-        )
-        .all()
+    return DashboardService.faculty_dashboard(
+        db,
+        current_user
     )
-
-    pending_review_reports = []
-
-    for report in reports:
-
-        if report.status == "COMPLIANCE_PASSED":
-
-            event = (
-                db.query(Event)
-                .filter(
-                    Event.id == report.event_id
-                )
-                .first()
-            )
-
-            pending_review_reports.append(
-                {
-                    "report_id": report.id,
-                    "event_title":
-                        event.event_title if event else None,
-                    "status": report.status
-                }
-            )
-
-    return {
-
-        "managed_clubs":
-            len(club_ids),
-
-        "pending_reviews":
-            len(pending_review_reports),
-
-        "approved_reports":
-            len([
-                r for r in reports
-                if r.status == "APPROVED"
-            ]),
-
-        "pending_review_reports":
-            pending_review_reports
-    }
-
 
 @router.get("/admin")
 def admin_dashboard(
@@ -284,28 +162,43 @@ def admin_dashboard(
     )
 ):
 
-    return {
+    return DashboardService.admin_dashboard(
+        db
+    )
 
-        "total_users":
-            db.query(User).count(),
+@router.get("/admin/report-summary")
+def report_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(UserRole.ADMIN)
+    )
+):
 
-        "total_clubs":
-            db.query(Club).count(),
+    return DashboardService.report_summary(
+        db
+    )
 
-        "total_events":
-            db.query(Event).count(),
+@router.get("/admin/club-performance")
+def club_performance(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(UserRole.ADMIN)
+    )
+):
 
-        "total_reports":
-            db.query(Report).count(),
+    return DashboardService.club_performance(
+        db
+    )
 
-        "approved_reports":
-            db.query(Report)
-            .filter(
-                Report.status == "APPROVED"
-            )
-            .count(),
+@router.get("/admin/repository-stats")
+def repository_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(UserRole.ADMIN)
+    )
+):
 
-        "repository_records":
-            db.query(EventRecord)
-            .count()
-    }
+    return DashboardService.repository_stats(
+        db
+    )
+

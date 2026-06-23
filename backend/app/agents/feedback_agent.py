@@ -1,12 +1,22 @@
 import json
 
 from app.ai.gemini_client import GeminiClient
+from app.ai.openrouter_client import OpenRouterClient
 
 
 class FeedbackAgent:
 
-    def __init__(self):
-        self.client = GeminiClient()
+    def __init__(
+        self,
+        use_openrouter=True
+    ):
+
+        self.use_openrouter = use_openrouter
+
+        if use_openrouter:
+            self.client = OpenRouterClient()
+        else:
+            self.client = GeminiClient()
 
     def generate_feedback(
         self,
@@ -43,4 +53,28 @@ Corrections Required:
 
 Return only the feedback.
 """
-        return self.client.generate(prompt)
+        try:
+
+            response = (
+                self.client.generate(
+                    prompt
+                )
+            )
+
+            if (
+                "AI generation failed"
+                in response
+                or
+                "Configuration Error"
+                in response
+            ):
+                raise Exception()
+
+            return response
+
+        except Exception:
+
+            return (
+                "Please review the compliance "
+                "issues and resubmit the report."
+            )

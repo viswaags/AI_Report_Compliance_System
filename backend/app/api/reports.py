@@ -23,7 +23,21 @@ from app.models.event import Event
 from app.services.report_drive_service import (
     ReportDriveService
 )
+from app.services.template_service import TemplateService
+from app.services.workflow_runner_service import (
+    WorkflowRunnerService
+)
+from app.models.club_membership import (
+    ClubMembership
+)
 
+from app.services.notification_service import (
+    NotificationService
+)
+
+from app.services.template_version_service import (
+    TemplateVersionService
+)
 
 
 router = APIRouter(
@@ -34,49 +48,9 @@ router = APIRouter(
 
 UPLOAD_DIR = "uploads"
 
-
-@router.post("/")
-def create_report(
-    report: ReportCreate,
-    db: Session = Depends(get_db)
-):
-    db_report = Report(
-        event_id=report.event_id,
-        template_id=report.template_id,
-        current_version=1
-    )
-
-    db.add(db_report)
-    db.commit()
-    db.refresh(db_report)
-
-    db_version = ReportVersion(
-        report_id=db_report.id,
-        version_no=1,
-        drive_file_id=None
-    )
-
-    db.add(db_version)
-    db.commit()
-    db.refresh(db_version)
-
-    return {
-        "report": db_report,
-        "version": db_version
-    }
-
-
-@router.get("/")
-def get_reports(
-    db: Session = Depends(get_db)
-):
-    return db.query(Report).all()
-
-
 @router.post("/submit")
 def submit_report(
     event_id: int = Form(...),
-    template_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(
@@ -97,6 +71,16 @@ def submit_report(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
+        )
+    
+    latest_template = (
+        TemplateService.get_latest_template(db)
+    )
+
+    if not latest_template:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No template available"
         )
 
     user_role = (
@@ -121,7 +105,7 @@ def submit_report(
 
     report = Report(
         event_id=event_id,
-        template_id=template_id,
+        template_id=latest_template.id,
         status="VALIDATING",
         current_version=1,
         created_by=current_user.id
@@ -131,9 +115,38 @@ def submit_report(
     db.commit()
     db.refresh(report)
 
+    club_id = event.club_id
+
+    memberships = (
+        db.query(ClubMembership)
+        .filter(
+            ClubMembership.club_id == event.club_id,
+            ClubMembership.role ==
+                UserRole.CLUB_COORDINATOR,
+            ClubMembership.is_active == True
+        )
+        .all()
+    )
+
+    for membership in memberships:
+
+        NotificationService.create_notification(
+            db=db,
+            user_id=membership.user_id,
+            title="New Report Submitted",
+            message=(
+                f"Report #{report.id} "
+                f"for event "
+                f"'{event.event_title}' "
+                f"has been submitted."
+            ),
+            notification_type="REPORT"
+        )
+
     version = ReportVersion(
         report_id=report.id,
         version_no=1,
+        template_id=latest_template.id,
         drive_file_id=None,
         file_path=file_path
     )
@@ -150,11 +163,21 @@ def submit_report(
     )
 
     try:
-        pipeline_result = ReportPipelineService.process_report_version(
+        '''pipeline_result = ReportPipelineService.process_report_version(
             db,
             report,
             version,
             file_path
+        )'''
+
+        workflow_result = (
+            WorkflowRunnerService
+            .run_report_workflow(
+                db=db,
+                report=report,
+                report_version=version,
+                file_path=file_path
+            )
         )
 
     except ValueError as exc:
@@ -163,13 +186,27 @@ def submit_report(
             detail=str(exc)
         ) from exc
 
-    return {
+    '''return {
         "report_id": report.id,
         "version_id": version.id,
         "validation_result_id":
             pipeline_result["validation_result"].id,
         "validation":
             pipeline_result["validation"]
+    }'''
+
+    return {
+        "report_id": report.id,
+        "version_id": version.id,
+        "validation_result_id":
+            workflow_result[
+                "validation_result"
+            ].id,
+
+        "validation":
+            workflow_result[
+                "validation"
+            ]
     }
 
 @router.post("/resubmit")
@@ -195,6 +232,12 @@ def resubmit_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found"
         )
+    
+    if report.status == "APPROVED":
+        raise HTTPException(
+            status_code=400,
+            detail="Approved reports cannot be resubmitted"
+        )
 
     user_role = (
         current_user.role.value
@@ -219,6 +262,12 @@ def resubmit_report(
         report_id
     )
 
+    ReportService.update_status(
+        db,
+        report_id,
+        "VALIDATING"
+    )
+
     filename = (
         f"report_{report_id}_v{next_version}_{file.filename}"
     )
@@ -228,12 +277,55 @@ def resubmit_report(
         filename
     )
 
+    latest_template = (
+        TemplateService.get_latest_template(db)
+    )
+
+    if not latest_template:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No template available"
+        )
+
     version = ReportVersionService.create_version(
         db=db,
         report_id=report_id,
         version_no=next_version,
+        template_id=latest_template.id,
         file_path=file_path
     )
+
+    event = (
+        db.query(Event)
+        .filter(
+            Event.id == report.event_id
+        )
+        .first()
+    )
+
+    memberships = (
+        db.query(ClubMembership)
+        .filter(
+            ClubMembership.club_id == event.club_id,
+            ClubMembership.role ==
+                UserRole.CLUB_COORDINATOR,
+            ClubMembership.is_active == True
+        )
+        .all()
+    )
+
+    for membership in memberships:
+
+        NotificationService.create_notification(
+            db=db,
+            user_id=membership.user_id,
+            title="Report Resubmitted",
+            message=(
+                f"Report #{report.id} "
+                f"has been resubmitted."
+            ),
+            notification_type="REPORT"
+        )
 
     ReportDriveService.upload_report_version(
         db=db,
@@ -243,11 +335,21 @@ def resubmit_report(
     )
 
     try:
-        pipeline_result = ReportPipelineService.process_report_version(
+        '''pipeline_result = ReportPipelineService.process_report_version(
             db,
             report,
             version,
             file_path
+        )'''
+
+        workflow_result = (
+            WorkflowRunnerService
+            .run_report_workflow(
+                db=db,
+                report=report,
+                report_version=version,
+                file_path=file_path
+            )
         )
 
     except ValueError as exc:
@@ -256,7 +358,7 @@ def resubmit_report(
             detail=str(exc)
         ) from exc
 
-    return {
+    '''return {
         "report_id": report.id,
         "version_no": next_version,
         "report_version_id": version.id,
@@ -264,28 +366,387 @@ def resubmit_report(
             pipeline_result["validation_result"].id,
         "validation":
             pipeline_result["validation"]
+    }'''
+
+    return {
+        "report_id": report.id,
+        "version_no": next_version,
+        "report_version_id": version.id,
+
+        "validation_result_id":
+            workflow_result[
+                "validation_result"
+            ].id,
+
+        "validation":
+            workflow_result[
+                "validation"
+            ]
     }
 
-@router.get("/my-reports")
-def get_my_reports(
+@router.get("/")
+def get_reports(
+    skip: int = 0,
+    limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(
+        get_current_user
+    )
 ):
+
+    if current_user.role == UserRole.ADMIN:
+
+        return (
+            db.query(Report)
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    club_ids = (
+        AccessControlService
+        .get_accessible_club_ids(
+            db,
+            current_user.id
+        )
+    )
+
+    return (
+        db.query(Report)
+        .join(
+            Event,
+            Report.event_id == Event.id
+        )
+        .filter(
+            Event.club_id.in_(club_ids)
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+@router.get("/my-reports")
+def my_reports(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
     reports = (
         db.query(Report)
         .filter(
-            Report.created_by == current_user.id
+            Report.created_by ==
+            current_user.id
         )
         .all()
     )
 
-    return reports
+    result = []
+
+    for report in reports:
+
+        event = (
+            db.query(Event)
+            .filter(
+                Event.id ==
+                report.event_id
+            )
+            .first()
+        )
+
+        result.append(
+            {
+                "report_id": report.id,
+                "event_title":
+                    event.event_title
+                    if event else None,
+                "status":
+                    report.status,
+                "current_version":
+                    report.current_version
+            }
+        )
+
+    return result
+
+@router.get("/{report_id}/status")
+def report_status(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    report = (
+        ReportService.get_report(
+            db,
+            report_id
+        )
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found"
+        )
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    return {
+        "report_id":
+            report.id,
+
+        "status":
+            report.status,
+
+        "current_version":
+            report.current_version
+    }
+
+@router.get("/{report_id}/summary")
+def report_summary(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    report = (
+        ReportService.get_report(
+            db,
+            report_id
+        )
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found"
+        )
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    event = (
+        db.query(Event)
+        .filter(
+            Event.id ==
+            report.event_id
+        )
+        .first()
+    )
+
+    return {
+
+        "report_id":
+            report.id,
+
+        "event_id":
+            report.event_id,
+
+        "event_title":
+            event.event_title
+            if event else None,
+
+        "event_category":
+            event.event_category
+            if event else None,
+
+        "event_date":
+            event.event_date
+            if event else None,
+
+        "status":
+            report.status,
+
+        "current_version":
+            report.current_version,
+
+        "template_id":
+            report.template_id
+    }
+
+@router.get("/{report_id}/validation")
+def latest_validation(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    report = (
+        ReportService.get_report(
+            db,
+            report_id
+        )
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found"
+        )
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    validation = (
+        _latest_validation(
+            db,
+            report_id
+        )
+    )
+
+    if not validation:
+        raise HTTPException(
+            status_code=404,
+            detail="Validation result not found"
+        )
+
+    return validation
+
+@router.get("/{report_id}/latest-review")
+def latest_review(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    report = (
+        ReportService.get_report(
+            db,
+            report_id
+        )
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found"
+        )
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    from app.models.review import Review
+
+    review = (
+        db.query(Review)
+        .join(
+            ReportVersion,
+            Review.report_version_id ==
+            ReportVersion.id
+        )
+        .filter(
+            ReportVersion.report_id ==
+            report_id
+        )
+        .order_by(
+            Review.id.desc()
+        )
+        .first()
+    )
+
+    if not review:
+        raise HTTPException(
+            status_code=404,
+            detail="Review not found"
+        )
+
+    return review
+
+@router.get("/{report_id}/template-status")
+def report_template_status(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    report = ReportService.get_report(
+        db,
+        report_id
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found"
+        )
+
+    return (
+        TemplateVersionService
+        .check_report_template_status(
+            db,
+            report
+        )
+    )
 
 @router.get("/{report_id}/compliance")
 def get_report_compliance(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
 ):
+    
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+        
     validation = _latest_validation(db, report_id)
     if not validation:
         raise HTTPException(
@@ -305,12 +766,35 @@ def get_report_compliance(
 @router.get("/{report_id}/feedback")
 def get_report_feedback(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
 ):
-    feedback = FeedbackService.latest_feedback_for_report(db, report_id)
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    feedback = (
+        FeedbackService
+        .latest_feedback_for_report(
+            db,
+            report_id
+        )
+    )
+
     if not feedback:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=404,
             detail="Feedback not found"
         )
 
@@ -320,12 +804,35 @@ def get_report_feedback(
 @router.get("/{report_id}/email-draft")
 def get_report_email_draft(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
 ):
-    draft = FeedbackService.latest_email_draft_for_report(db, report_id)
+
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+
+    draft = (
+        FeedbackService
+        .latest_email_draft_for_report(
+            db,
+            report_id
+        )
+    )
+
     if not draft:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=404,
             detail="Email draft not found"
         )
 
@@ -335,8 +842,24 @@ def get_report_email_draft(
 @router.get("/{report_id}/history")
 def report_history(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
 ):
+    
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
+        
     versions = (
         db.query(ReportVersion)
         .filter(ReportVersion.report_id == report_id)
@@ -345,6 +868,7 @@ def report_history(
     )
 
     history = []
+    from app.models.review import Review
     for version in versions:
         extraction = (
             db.query(ReportExtraction)
@@ -357,19 +881,78 @@ def report_history(
             .order_by(ValidationResult.id.desc())
             .first()
         )
+        review = (
+            db.query(Review)
+            .filter(
+                Review.report_version_id == version.id
+            )
+            .first()
+        )
+
+        feedback = None
+
+        if validation:
+
+            feedback = (
+                db.query(Feedback)
+                .filter(
+                    Feedback.validation_result_id ==
+                    validation.id
+                )
+                .order_by(
+                    Feedback.id.desc()
+                )
+                .first()
+            )
+
         history.append({
             "version": version,
-            "extraction": extraction.extracted_json if extraction else None,
-            "validation": validation
+            "extraction":
+                extraction.extracted_json
+                if extraction else None,
+
+            "validation":
+                validation,
+
+            "feedback":
+                feedback,
+
+            "review":
+                review
         })
 
     return history
 
+@router.get("/{report_id}/versions")
+def report_versions(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
+):
+
+    return (
+        db.query(
+            ReportVersion
+        )
+        .filter(
+            ReportVersion.report_id
+            == report_id
+        )
+        .order_by(
+            ReportVersion.version_no.desc()
+        )
+        .all()
+    )
 
 @router.get("/{report_id}")
 def get_report_details(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        get_current_user
+    )
 ):
     report = ReportService.get_report(db, report_id)
     if not report:
@@ -377,6 +960,18 @@ def get_report_details(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found"
         )
+    
+    if current_user.role != UserRole.ADMIN:
+
+        if not AccessControlService.user_can_access_report(
+            db,
+            current_user.id,
+            report_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No access to this report"
+            )
 
     versions = (
         db.query(ReportVersion)
