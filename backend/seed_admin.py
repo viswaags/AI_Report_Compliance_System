@@ -1,10 +1,14 @@
 from app.auth.security import hash_password
 from app.database.db import SessionLocal
 from app.models.user import User, UserRole
+import os
 
+from dotenv import load_dotenv
 
-ADMIN_EMAIL = "admin@system.com"
-ADMIN_PASSWORD = "Admin@123"
+load_dotenv()
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 
 def seed_admin() -> None:

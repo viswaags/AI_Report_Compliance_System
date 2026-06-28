@@ -6,21 +6,19 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-
 load_dotenv()
 
-
 class GoogleDriveService:
-
-    TOKEN_FILE = os.getenv(
-        "GOOGLE_OAUTH_TOKEN"
-    )
 
     @classmethod
     def get_service(cls):
 
+        token_file = os.getenv(
+            "GOOGLE_OAUTH_TOKEN"
+        )
+
         credentials = Credentials.from_authorized_user_file(
-            cls.TOKEN_FILE
+            token_file
         )
 
         return build(
