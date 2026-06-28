@@ -86,6 +86,18 @@ class ReportPipelineService:
             )
         )
 
+        import json
+
+        print("=" * 80)
+        print("SIGNATURES")
+        print(
+            json.dumps(
+                canonical_report_model["signatures"],
+                indent=4
+            )
+        )
+        print("=" * 80)
+
         #
         # Latest Template Check
         #

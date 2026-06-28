@@ -40,7 +40,7 @@ class ReportVersionService:
 
         db.add(version)
 
-        db.commit()
+        db.flush()
 
         db.refresh(version)
 

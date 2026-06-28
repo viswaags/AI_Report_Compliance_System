@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -158,13 +162,20 @@ def forgot_password(
         )
     )
 
+
+    reset_link = (
+        f"{os.getenv('FRONTEND_URL')}"
+        f"/auth/reset-password"
+        f"?token={reset_token.token}"
+    )
+
     EmailService.send_email(
         recipients=[user.email],
         subject="Password Reset",
         body=(
-            "Use the following token to reset your password.\n\n"
-            f"{reset_token.token}\n\n"
-            "This token expires in 1 hour."
+            "Click the link below to reset your password.\n\n"
+            f"{reset_link}\n\n"
+            "This link expires in 1 hour."
         )
     )
 
@@ -241,5 +252,11 @@ def me(
         "must_change_password":
             current_user.must_change_password,
         "is_active":
-            current_user.is_active
+            current_user.is_active,
+
+        "created_by":
+            current_user.created_by,
+
+        "created_at":
+            current_user.created_at
     }

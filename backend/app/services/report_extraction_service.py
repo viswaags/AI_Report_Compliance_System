@@ -30,7 +30,7 @@ class ReportExtractionService:
                 extracted_json
             )
 
-            db.commit()
+            db.flush()
 
             db.refresh(
                 extraction
@@ -48,7 +48,7 @@ class ReportExtractionService:
 
         db.add(extraction)
 
-        db.commit()
+        db.flush()
 
         db.refresh(extraction)
 

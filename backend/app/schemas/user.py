@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, EmailStr
 
 from app.models.user import UserRole
@@ -16,17 +18,22 @@ class AssignMembershipRequest(BaseModel):
     role: UserRole
 
 
-class UserResponse(BaseModel):
-    id: int
-    name: str
-    email: str
-    role: UserRole
-    is_active: bool
-
-    class Config:
-        from_attributes = True
-
 class BulkAssignMembershipRequest(BaseModel):
     user_id: int
     club_ids: list[int]
     role: UserRole
+
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+    role: UserRole
+
+    is_active: bool
+
+    created_by: int | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

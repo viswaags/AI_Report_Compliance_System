@@ -12,6 +12,7 @@ from app.services.notification_service import (
     NotificationService
 )
 from app.auth.dependencies import get_current_user
+from app.schemas.club_membership import ClubMembershipResponse
 
 
 router = APIRouter(prefix="/club-memberships", tags=["Club Memberships"])
@@ -128,7 +129,7 @@ def assign_membership(
     )
 
     db.add(db_membership)
-    db.commit()
+    db.flush()
     db.refresh(db_membership)
 
     NotificationService.create_notification(
@@ -142,6 +143,8 @@ def assign_membership(
         ),
         notification_type="MEMBERSHIP"
     )
+
+    db.commit()
 
     return db_membership
 
@@ -268,7 +271,7 @@ def my_memberships(
         .all()
     )
 
-@router.get("/")
+@router.get("/", response_model=list[ClubMembershipResponse])
 def get_memberships(
     db: Session = Depends(get_db),
     current_user: User = Depends(
@@ -278,14 +281,20 @@ def get_memberships(
     )
 ):
 
-    return (
-        db.query(
-            ClubMembership
+    memberships = (
+        db.query(ClubMembership)
+        .filter(
+            ClubMembership.is_active == True
         )
         .all()
     )
 
-@router.get("/club/{club_id}")
+    return memberships
+
+@router.get(
+    "/club/{club_id}",
+    response_model=list[ClubMembershipResponse]
+)
 def memberships_by_club(
     club_id: int,
     db: Session = Depends(get_db),
@@ -294,16 +303,34 @@ def memberships_by_club(
     )
 ):
 
-    return (
-        db.query(
-            ClubMembership
-        )
-        .filter(
-            ClubMembership.club_id ==
-            club_id,
+    #
+    # Admin can access every club
+    #
+    if current_user.role != UserRole.ADMIN:
 
-            ClubMembership.is_active ==
-            True
+        has_access = (
+            db.query(ClubMembership)
+            .filter(
+                ClubMembership.user_id == current_user.id,
+                ClubMembership.club_id == club_id,
+                ClubMembership.is_active == True
+            )
+            .first()
+        )
+
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this club."
+            )
+
+    memberships = (
+        db.query(ClubMembership)
+        .filter(
+            ClubMembership.club_id == club_id,
+            ClubMembership.is_active == True
         )
         .all()
     )
+
+    return memberships

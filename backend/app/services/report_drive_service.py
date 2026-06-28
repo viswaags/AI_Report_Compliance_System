@@ -82,6 +82,8 @@ class ReportDriveService:
 
         report_version.drive_file_id = drive_file_id
 
-        db.commit()
+        db.flush()
+
+        db.refresh(report_version)
 
         return drive_file_id

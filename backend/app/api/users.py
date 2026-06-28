@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.auth.dependencies import require_role
 from app.auth.security import hash_password
@@ -9,6 +10,8 @@ from app.schemas.user import CreateUserRequest, UserResponse
 from app.services.notification_service import (
     NotificationService
 )
+from app.auth.dependencies import get_current_user
+from app.models.club_membership import ClubMembership
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -63,11 +66,12 @@ def create_user(
         password_hash=hash_password(user.password),
         role=user.role,
         is_active=True,
+        created_by=current_user.id,
         must_change_password=True
     )
 
     db.add(db_user)
-    db.commit()
+    db.flush()
     db.refresh(db_user)
 
     NotificationService.create_notification(
@@ -82,15 +86,119 @@ def create_user(
         notification_type="USER"
     )
 
-    return db_user
+    db.commit()
 
+    return db_user
 
 @router.get("/", response_model=list[UserResponse])
 def get_users(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN))
+    current_user: User = Depends(get_current_user)
 ):
-    return db.query(User).all()
+
+    #
+    # Admin
+    #
+    if current_user.role == UserRole.ADMIN:
+
+        return db.query(User).all()
+
+    #
+    # Club Coordinator
+    #
+    if current_user.role == UserRole.CLUB_COORDINATOR:
+
+        return (
+            db.query(User)
+            .filter(
+                User.created_by == current_user.id
+            )
+            .all()
+        )
+
+    #
+    # Faculty Representative / Student Representative
+    #
+    memberships = (
+        db.query(ClubMembership)
+        .filter(
+            ClubMembership.user_id == current_user.id,
+            ClubMembership.is_active == True
+        )
+        .all()
+    )
+
+    club_ids = [m.club_id for m in memberships]
+
+    return (
+        db.query(User)
+        .join(
+            ClubMembership,
+            User.id == ClubMembership.user_id
+        )
+        .filter(
+            ClubMembership.club_id.in_(club_ids),
+            ClubMembership.is_active == True
+        )
+        .distinct()
+        .all()
+    )
+
+@router.get("/available-for-membership", response_model=list[UserResponse])
+def get_users_for_membership(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    #
+    # Admin
+    #
+    if current_user.role == UserRole.ADMIN:
+
+        return db.query(User).all()
+
+    #
+    # Club Coordinator
+    #
+    if current_user.role == UserRole.CLUB_COORDINATOR:
+
+        return (
+            db.query(User)
+            .filter(
+                or_(
+                    User.id == current_user.id,
+                    User.created_by == current_user.id
+                )
+            )
+            .all()
+        )
+
+    #
+    # Faculty / Student
+    #
+    memberships = (
+        db.query(ClubMembership)
+        .filter(
+            ClubMembership.user_id == current_user.id,
+            ClubMembership.is_active == True
+        )
+        .all()
+    )
+
+    club_ids = [m.club_id for m in memberships]
+
+    return (
+        db.query(User)
+        .join(
+            ClubMembership,
+            User.id == ClubMembership.user_id
+        )
+        .filter(
+            ClubMembership.club_id.in_(club_ids),
+            ClubMembership.is_active == True
+        )
+        .distinct()
+        .all()
+    )
 
 @router.patch("/{user_id}/activate")
 def activate_user(
@@ -191,4 +299,3 @@ def get_user(
         )
 
     return user
-

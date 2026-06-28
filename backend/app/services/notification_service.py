@@ -21,7 +21,7 @@ class NotificationService:
 
         db.add(notification)
 
-        db.commit()
+        db.flush()
 
         db.refresh(notification)
 

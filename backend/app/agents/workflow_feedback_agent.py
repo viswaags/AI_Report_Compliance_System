@@ -35,7 +35,7 @@ class WorkflowFeedbackAgent:
 
         db.add(feedback_record)
 
-        db.commit()
+        db.flush()
 
         db.refresh(feedback_record)
 

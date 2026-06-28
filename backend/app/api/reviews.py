@@ -70,13 +70,17 @@ def create_review(
             )
 
     try:
-        return ReviewService.create_review(
+        review =  ReviewService.create_review(
             db=db,
             report_id=review.report_id,
             reviewer_id=reviewer_id,
             status=review.status,
             comments=review.comments
         )
+
+        db.commit()
+
+        return review
 
     except ValueError as exc:
 

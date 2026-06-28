@@ -121,26 +121,148 @@ class RawExtractionBuilder:
         document = Document(file_path)
         paragraphs = []
         text_parts = []
+        header_paragraphs = []
 
-        for index, paragraph in enumerate(document.paragraphs):
+        for section in document.sections:
+
+            for paragraph in section.header.paragraphs:
+
+                text = RawExtractionBuilder._clean_text(paragraph.text)
+
+                if text:
+
+                    header_paragraphs.append(text)
+
+        footer_paragraphs = []
+
+        for section in document.sections:
+
+            for paragraph in section.footer.paragraphs:
+
+                text = RawExtractionBuilder._clean_text(paragraph.text)
+
+                if text:
+                    footer_paragraphs.append(text)
+        
+        all_paragraphs = []
+
+        for text in header_paragraphs:
+
+            all_paragraphs.append(
+                {
+                    "text": text,
+                    "source": "header",
+                }
+            )
+
+        for text in footer_paragraphs:
+
+            all_paragraphs.append(
+                {
+                    "text": text,
+                    "source": "footer",
+                }
+            )
+
+        for paragraph in document.paragraphs:
+
             text = RawExtractionBuilder._clean_text(paragraph.text)
+
+            if text:
+
+                all_paragraphs.append(
+                    {
+                        "text": text,
+                        "source": "body",
+                    }
+                )
+
+        for p in document.sections[0].footer.paragraphs:
+            print(repr(p.text))
+
+        for index, paragraph in enumerate(all_paragraphs):
+
+            text = paragraph["text"]
+
+            source = paragraph["source"]
+
             if not text:
                 continue
 
             text_parts.append(text)
-            zone = None
 
-            if index <= 2:
+            if source == "header":
+
                 zone = "top_center"
 
-            elif index >= max(0, len(document.paragraphs) - 3):
-                zone = "bottom_left"
+            zone = None
+
+            if source == "header":
+
+                zone = "top_center"
+
+            elif source == "footer":
+
+                lower = text.lower()
+
+                if "principal" in lower:
+
+                    zone = "bottom_right"
+
+                elif (
+                    "faculty" in lower
+                    or "club coordinator" in lower
+                    or "coordinator" in lower
+                ):
+
+                    zone = "bottom_left"
+
+                else:
+
+                    zone = "bottom_left"
+
+            else:
+
+                if index <= 2:
+
+                    zone = "top_center"
+
+            if source == "header":
+
+                location = RawExtractionBuilder._location(
+                    1, 595, 842,
+                    40, 30,
+                    555, 110,
+                )
+
+            elif source == "footer":
+
+                location = RawExtractionBuilder._location(
+                    1, 595, 842,
+                    40, 760,
+                    555, 790,
+                )
+
+            else:
+
+                body_index = index - len(header_paragraphs)
+
+                y = 130 + body_index * 25
+
+                location = RawExtractionBuilder._location(
+                    1, 595, 842,
+                    40,
+                    y,
+                    555,
+                    y + 20,
+                )
 
             paragraphs.append({
                 "text": text,
                 "order": index,
-                "page_number": None,
+                "page_number": 1,
                 "zone": zone,
+                "location": location,
             })
 
         tables = []
@@ -156,6 +278,10 @@ class RawExtractionBuilder:
                     "cells": cells,
                     "label": RawExtractionBuilder._first_non_empty(cells),
                     "value": RawExtractionBuilder._second_non_empty(cells),
+
+                    "location": {
+                        "page_number": 1,
+                    },
                 })
 
             tables.append({
@@ -174,11 +300,16 @@ class RawExtractionBuilder:
 
                 zone = paragraph.get("zone")
 
+                lower = text.lower()
+
                 if (
                     zone is None
                     and 2 <= len(text.split()) <= 10
-                    and "coordinator" not in text.lower()
-                    and "principal" not in text.lower()
+                    and "report" not in lower
+                    and "institute" not in lower
+                    and "coimbatore" not in lower
+                    and "faculty" not in lower
+                    and "principal" not in lower
                 ):
                     captions.append(text)
 
@@ -190,25 +321,107 @@ class RawExtractionBuilder:
 
         for index in range(image_count):
 
-            zone = None
+            if image_count >= 3:
 
-            if index == 0:
-                zone = "top_left"
+                if index == 0:
 
-            elif index == 1:
-                zone = "top_right"
+                    location = RawExtractionBuilder._location(
+                        1,595,842,
+                        20,20,90,90
+                    )
 
-            images.append({
-                "page_number": None,
-                "image_index": index,
-                "location": None,
-                "zone": zone,
-                "caption": (
-                    captions[index]
-                    if index < len(captions)
-                    else None
-                ),
-            })
+                elif index == 1:
+
+                    location = RawExtractionBuilder._location(
+                        1,595,842,
+                        505,20,575,90
+                    )
+
+                else:
+
+                    location = RawExtractionBuilder._location(
+                        1,
+                        595,
+                        842,
+                        120,
+                        330,
+                        480,
+                        520,
+                    )
+
+            elif image_count == 2:
+
+                if header_paragraphs:
+
+                    if index == 0:
+
+                        location = RawExtractionBuilder._location(
+                            1,595,842,
+                            20,20,90,90
+                        )
+
+                    else:
+
+                        location = RawExtractionBuilder._location(
+                            1,
+                            595,
+                            842,
+                            120,
+                            330,
+                            480,
+                            520,
+                        )
+
+                else:
+
+                    location = RawExtractionBuilder._location(
+                        1,
+                        595,
+                        842,
+                        120,
+                        330,
+                        480,
+                        520,
+                    )
+
+            else:
+
+                if header_paragraphs:
+
+                    location = RawExtractionBuilder._location(
+                        1,
+                        595,
+                        842,
+                        120,
+                        330,
+                        480,
+                        520,
+                    )
+
+                else:
+
+                    location = RawExtractionBuilder._location(
+                        1,
+                        595,
+                        842,
+                        20,
+                        20,
+                        90,
+                        90,
+                    )
+
+            zone = RawExtractionBuilder._zone_from_location(location)
+
+            images.append(
+                {
+                    "page_number": 1,
+                    "image_index": index,
+                    "location": location,
+                    "zone": zone,
+                    "caption": captions[0] if zone == "center" and captions else None,
+                    "is_header": zone.startswith("top"),
+                }
+            )
 
         return {
             "model_type": "raw_extraction",
@@ -226,26 +439,80 @@ class RawExtractionBuilder:
         tables = []
 
         with pdfplumber.open(file_path) as pdf:
+
             for page_index, page in enumerate(pdf.pages):
-                for table_index, table in enumerate(page.extract_tables() or []):
+
+                extracted_tables = page.find_tables()
+
+                for table_index, table in enumerate(extracted_tables):
+
+                    extracted = table.extract()
+
                     rows = []
-                    for row_index, row in enumerate(table):
+
+                    for row_index, row in enumerate(extracted):
+
                         cells = [
                             RawExtractionBuilder._clean_text(cell or "")
                             for cell in row
                         ]
-                        rows.append({
-                            "row_order": row_index,
-                            "cells": cells,
-                            "label": RawExtractionBuilder._first_non_empty(cells),
-                            "value": RawExtractionBuilder._second_non_empty(cells),
-                        })
 
-                    tables.append({
-                        "table_index": table_index,
-                        "page_number": page_index + 1,
-                        "rows": rows,
-                    })
+                        row_location = None
+
+                        try:
+
+                            if row_index < len(table.rows):
+
+                                bbox = table.rows[row_index].bbox
+
+                                x0, y0, x1, y1 = bbox
+
+                                row_location = {
+                                    "page_number": page_index + 1,
+                                    "page_width": page.width,
+                                    "page_height": page.height,
+                                    "x0": x0,
+                                    "y0": y0,
+                                    "x1": x1,
+                                    "y1": y1,
+                                    "center_x": (x0 + x1) / 2,
+                                    "center_y": (y0 + y1) / 2,
+                                }
+
+                        except Exception:
+                            pass
+
+                        rows.append(
+                            {
+                                "row_order": row_index,
+                                "cells": cells,
+                                "label": RawExtractionBuilder._first_non_empty(cells),
+                                "value": RawExtractionBuilder._second_non_empty(cells),
+                                "location": (
+                                    row_location
+                                    if row_location
+                                    else {
+                                        "page_number": page_index + 1,
+                                        "page_width": page.width,
+                                        "page_height": page.height,
+                                        "x0": 0,
+                                        "y0": 0,
+                                        "x1": page.width,
+                                        "y1": 0,
+                                        "center_x": page.width / 2,
+                                        "center_y": 0,
+                                    }
+                                ),
+                            }
+                        )
+
+                    tables.append(
+                        {
+                            "table_index": table_index,
+                            "page_number": page_index + 1,
+                            "rows": rows,
+                        }
+                    )
 
         return tables
 

@@ -1,7 +1,6 @@
 from app.services.semantic_validator import (
     SemanticValidator
 )
-from app.models import canonical_report_model
 
 
 class SemanticValidationAgent:
@@ -24,7 +23,7 @@ class SemanticValidationAgent:
     def run(state):
 
         event_fields = (
-            canonical_report_model
+            state["canonical_report_model"]
             .get(
                 "event_information_table",
                 {}

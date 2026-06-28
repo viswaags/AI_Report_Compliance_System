@@ -73,11 +73,15 @@ def create_template(
     )
 ):
 
-    return TemplateService.create_template(
+    created_template =  TemplateService.create_template(
         db=db,
         version=template.version,
         schema_json=template.template_schema
     )
+
+    db.commit()
+
+    return created_template
 
 
 @router.post("/upload", response_model=TemplateResponse)

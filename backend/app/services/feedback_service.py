@@ -37,7 +37,7 @@ class FeedbackService:
         )
 
         db.add(feedback)
-        db.commit()
+        db.flush()
         db.refresh(feedback)
 
         return feedback

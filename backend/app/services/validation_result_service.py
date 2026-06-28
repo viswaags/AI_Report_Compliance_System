@@ -54,7 +54,7 @@ class ValidationResultService:
 
         db.add(validation_result)
 
-        db.commit()
+        db.flush()
 
         db.refresh(validation_result)
 

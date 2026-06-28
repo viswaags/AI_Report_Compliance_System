@@ -1,5 +1,6 @@
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 
 from app.database.db import Base
 from app.models.user import UserRole
@@ -38,6 +39,14 @@ class ClubMembership(Base):
         server_default=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "club_id", name="uq_club_memberships_user_club"),
+    user = relationship(
+        "User",
+        backref="club_memberships"
     )
+
+    club = relationship(
+        "Club",
+        backref="club_memberships"
+    )
+
+    __table_args__ = (UniqueConstraint("user_id", "club_id", name="uq_club_memberships_user_club"),)

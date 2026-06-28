@@ -30,6 +30,15 @@ class WorkflowSemanticAgent:
             or ""
         )
 
+        validation = state.get(
+            "validation",
+            {}
+        )
+
+        if validation.get("status") == "failed":
+
+            return state
+
         semantic_issues = (
             SemanticValidationAgent
             .validate(

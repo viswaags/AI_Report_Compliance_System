@@ -38,6 +38,9 @@ from app.services.notification_service import (
 from app.services.template_version_service import (
     TemplateVersionService
 )
+from app.services.google_drive_service import (
+    GoogleDriveService
+)
 
 
 router = APIRouter(
@@ -100,6 +103,8 @@ def submit_report(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this event"
             )
+        
+    file_path = None
 
     file_path = _save_upload(file)
 
@@ -117,32 +122,6 @@ def submit_report(
 
     club_id = event.club_id
 
-    memberships = (
-        db.query(ClubMembership)
-        .filter(
-            ClubMembership.club_id == event.club_id,
-            ClubMembership.role ==
-                UserRole.CLUB_COORDINATOR,
-            ClubMembership.is_active == True
-        )
-        .all()
-    )
-
-    for membership in memberships:
-
-        NotificationService.create_notification(
-            db=db,
-            user_id=membership.user_id,
-            title="New Report Submitted",
-            message=(
-                f"Report #{report.id} "
-                f"for event "
-                f"'{event.event_title}' "
-                f"has been submitted."
-            ),
-            notification_type="REPORT"
-        )
-
     version = ReportVersion(
         report_id=report.id,
         version_no=1,
@@ -154,13 +133,6 @@ def submit_report(
     db.add(version)
     db.commit()
     db.refresh(version)
-
-    ReportDriveService.upload_report_version(
-        db=db,
-        report=report,
-        report_version=version,
-        file_path=file_path
-    )
 
     try:
         '''pipeline_result = ReportPipelineService.process_report_version(
@@ -180,7 +152,47 @@ def submit_report(
             )
         )
 
-    except ValueError as exc:
+        ReportDriveService.upload_report_version(
+            db=db,
+            report=report,
+            report_version=version,
+            file_path=file_path
+        )
+
+        memberships = (
+            db.query(ClubMembership)
+            .filter(
+                ClubMembership.club_id == event.club_id,
+                ClubMembership.role ==
+                    UserRole.CLUB_COORDINATOR,
+                ClubMembership.is_active == True
+            )
+            .all()
+        )
+
+        for membership in memberships:
+
+            NotificationService.create_notification(
+                db=db,
+                user_id=membership.user_id,
+                title="New Report Submitted",
+                message=(
+                    f"Report #{report.id} "
+                    f"for event "
+                    f"'{event.event_title}' "
+                    f"has been submitted."
+                ),
+                notification_type="REPORT"
+            )
+        
+        db.commit()
+
+    except Exception as exc:
+        db.rollback()
+
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc)
@@ -257,20 +269,18 @@ def resubmit_report(
                 detail="You do not have access to this report"
             )
 
-    next_version = ReportService.increment_version(
-        db,
-        report_id
-    )
+    #next_version = ReportService.increment_version(db,report_id)
 
-    ReportService.update_status(
-        db,
-        report_id,
-        "VALIDATING"
-    )
+    next_version = report.current_version + 1
+
+
+    #ReportService.update_status(db,report_id,"VALIDATING")
 
     filename = (
         f"report_{report_id}_v{next_version}_{file.filename}"
     )
+
+    file_path = None
 
     file_path = _save_upload(
         file,
@@ -295,45 +305,6 @@ def resubmit_report(
         file_path=file_path
     )
 
-    event = (
-        db.query(Event)
-        .filter(
-            Event.id == report.event_id
-        )
-        .first()
-    )
-
-    memberships = (
-        db.query(ClubMembership)
-        .filter(
-            ClubMembership.club_id == event.club_id,
-            ClubMembership.role ==
-                UserRole.CLUB_COORDINATOR,
-            ClubMembership.is_active == True
-        )
-        .all()
-    )
-
-    for membership in memberships:
-
-        NotificationService.create_notification(
-            db=db,
-            user_id=membership.user_id,
-            title="Report Resubmitted",
-            message=(
-                f"Report #{report.id} "
-                f"has been resubmitted."
-            ),
-            notification_type="REPORT"
-        )
-
-    ReportDriveService.upload_report_version(
-        db=db,
-        report=report,
-        report_version=version,
-        file_path=file_path
-    )
-
     try:
         '''pipeline_result = ReportPipelineService.process_report_version(
             db,
@@ -352,7 +323,61 @@ def resubmit_report(
             )
         )
 
-    except ValueError as exc:
+        ReportDriveService.upload_report_version(
+            db=db,
+            report=report,
+            report_version=version,
+            file_path=file_path
+        )
+
+        event = (
+            db.query(Event)
+            .filter(
+                Event.id == report.event_id
+            )
+            .first()
+        )
+
+        memberships = (
+            db.query(ClubMembership)
+            .filter(
+                ClubMembership.club_id == event.club_id,
+                ClubMembership.role ==
+                    UserRole.CLUB_COORDINATOR,
+                ClubMembership.is_active == True
+            )
+            .all()
+        )
+
+        for membership in memberships:
+
+            NotificationService.create_notification(
+                db=db,
+                user_id=membership.user_id,
+                title="Report Resubmitted",
+                message=(
+                    f"Report #{report.id} "
+                    f"has been resubmitted."
+                ),
+                notification_type="REPORT"
+            )
+
+        ReportService.increment_version(
+            db,
+            report_id
+        )
+
+        db.commit()
+
+        #ReportService.update_status(db, report_id, "VALIDATING")
+
+    except Exception as exc:
+
+        db.rollback()
+
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc)
@@ -396,34 +421,72 @@ def get_reports(
 
     if current_user.role == UserRole.ADMIN:
 
-        return (
+        reports = (
             db.query(Report)
             .offset(skip)
             .limit(limit)
             .all()
         )
 
-    club_ids = (
-        AccessControlService
-        .get_accessible_club_ids(
-            db,
-            current_user.id
-        )
-    )
+    else:
 
-    return (
-        db.query(Report)
-        .join(
-            Event,
-            Report.event_id == Event.id
+        club_ids = (
+            AccessControlService
+            .get_accessible_club_ids(
+                db,
+                current_user.id
+            )
         )
-        .filter(
-            Event.club_id.in_(club_ids)
+
+        reports = (
+            db.query(Report)
+            .join(
+                Event,
+                Report.event_id == Event.id
+            )
+            .filter(
+                Event.club_id.in_(club_ids)
+            )
+            .offset(skip)
+            .limit(limit)
+            .all()
         )
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
+
+    result = []
+
+    for report in reports:
+
+        current_version = (
+            ReportService
+            .get_current_report_version(
+                db,
+                report.id,
+                report.current_version
+            )
+        )
+
+        drive_url = None
+
+        if current_version and current_version.drive_file_id:
+            drive_url = (
+                GoogleDriveService
+                .get_file_url(
+                    current_version.drive_file_id
+                )
+            )
+
+        result.append({
+            "id": report.id,
+            "event_id": report.event_id,
+            "template_id": report.template_id,
+            "status": report.status,
+            "current_version": report.current_version,
+            "created_at": report.created_at,
+            "created_by": report.created_by,
+            "current_report_drive_url": drive_url
+        })
+
+    return result
 
 @router.get("/my-reports")
 def my_reports(
@@ -954,13 +1017,18 @@ def get_report_details(
         get_current_user
     )
 ):
-    report = ReportService.get_report(db, report_id)
+
+    report = ReportService.get_report(
+        db,
+        report_id
+    )
+
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found"
         )
-    
+
     if current_user.role != UserRole.ADMIN:
 
         if not AccessControlService.user_can_access_report(
@@ -973,18 +1041,49 @@ def get_report_details(
                 detail="No access to this report"
             )
 
+    current_version = (
+        ReportService
+        .get_current_report_version(
+            db,
+            report.id,
+            report.current_version
+        )
+    )
+
+    drive_url = None
+
+    if current_version and current_version.drive_file_id:
+        drive_url = (
+            GoogleDriveService
+            .get_file_url(
+                current_version.drive_file_id
+            )
+        )
+
     versions = (
         db.query(ReportVersion)
-        .filter(ReportVersion.report_id == report_id)
-        .order_by(ReportVersion.version_no)
+        .filter(
+            ReportVersion.report_id == report_id
+        )
+        .order_by(
+            ReportVersion.version_no
+        )
         .all()
     )
 
     return {
-        "report": report,
+        "report": {
+            "id": report.id,
+            "event_id": report.event_id,
+            "template_id": report.template_id,
+            "status": report.status,
+            "current_version": report.current_version,
+            "created_at": report.created_at,
+            "created_by": report.created_by,
+            "current_report_drive_url": drive_url
+        },
         "versions": versions
     }
-
 
 def _save_upload(file: UploadFile, filename: str | None = None):
     extension = os.path.splitext(file.filename or "")[1].lower()

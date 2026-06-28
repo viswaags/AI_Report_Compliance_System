@@ -27,4 +27,6 @@ class TemplateWorkflowRunnerService:
             }
         )
 
+        db.commit()
+
         return result

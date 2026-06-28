@@ -153,9 +153,7 @@ class RecordManagementService:
         )
 
         db.add(record)
-
-        db.commit()
-
+        db.flush()
         db.refresh(record)
 
         return record

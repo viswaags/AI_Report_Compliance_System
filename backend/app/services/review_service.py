@@ -86,7 +86,7 @@ class ReviewService:
         report.status = status
 
         db.add(review)
-        db.commit()
+        db.flush()
         db.refresh(review)
 
         return review

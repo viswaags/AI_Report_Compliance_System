@@ -1,4 +1,6 @@
 from app.models.report import Report
+from app.models.report_version import ReportVersion
+from sqlalchemy.orm import Session
 
 
 class ReportService:
@@ -22,11 +24,12 @@ class ReportService:
 
             report.status = status
 
-            db.commit()
+            db.flush()
 
             db.refresh(report)
 
         return report
+
     @staticmethod
     def get_report(
         db,
@@ -60,8 +63,23 @@ class ReportService:
 
         report.current_version += 1
 
-        db.commit()
+        db.flush()
 
         db.refresh(report)
 
         return report.current_version
+    
+    @staticmethod
+    def get_current_report_version(
+        db: Session,
+        report_id: int,
+        current_version: int
+    ):
+        return (
+            db.query(ReportVersion)
+            .filter(
+                ReportVersion.report_id == report_id,
+                ReportVersion.version_no == current_version
+            )
+            .first()
+        )

@@ -18,10 +18,15 @@ def generate_feedback(
     db: Session = Depends(get_db)
 ):
     try:
-        return FeedbackService.generate_feedback(
+        feedback =  FeedbackService.generate_feedback(
             db,
             validation_result_id
         )
+
+        db.commit()
+
+        return feedback
+    
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -35,10 +40,15 @@ def generate_feedback_bundle(
     db: Session = Depends(get_db)
 ):
     try:
-        return FeedbackService.generate_feedback_bundle(
+        feedback =  FeedbackService.generate_feedback_bundle(
             db,
             validation_result_id
         )
+
+        db.commit()
+
+        return feedback 
+    
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

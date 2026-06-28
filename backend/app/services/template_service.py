@@ -19,7 +19,7 @@ class TemplateService:
 
         db.add(template)
 
-        db.commit()
+        db.flush()
 
         db.refresh(template)
 

@@ -18,15 +18,25 @@ class ReviewWorkflowRunnerService:
             ReviewWorkflow.build()
         )
 
-        return workflow.invoke(
-            {
-                "db": db,
-                "report_id": report_id,
-                "reviewer_id": reviewer_id,
-                "review_status": review_status,
-                "comments": comments,
-                "review": None,
-                "event_record": None,
-                "notification": None
-            }
-        )
+        try:
+
+            result =  workflow.invoke(
+                {
+                    "db": db,
+                    "report_id": report_id,
+                    "reviewer_id": reviewer_id,
+                    "review_status": review_status,
+                    "comments": comments,
+                    "review": None,
+                    "event_record": None,
+                    "notification": None
+                }
+            )
+
+            db.commit()
+
+        except:
+            db.rollback()
+
+
+        return result
