@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.database.db import engine
+import app.database.init_db
 
 from app.api.users import router as users_router
 from app.api.clubs import router as clubs_router
