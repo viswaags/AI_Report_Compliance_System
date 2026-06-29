@@ -1,3 +1,4 @@
+import json
 import os
 
 from dotenv import load_dotenv
@@ -8,24 +9,46 @@ from googleapiclient.http import MediaFileUpload
 
 load_dotenv()
 
+
 class GoogleDriveService:
 
     @classmethod
     def get_service(cls):
 
-        token_file = os.getenv(
-            "GOOGLE_OAUTH_TOKEN"
-        )
+        try:
+            token_json = os.getenv("GOOGLE_TOKEN_JSON")
 
-        credentials = Credentials.from_authorized_user_file(
-            token_file
-        )
+            if token_json and token_json.strip():
+                credentials = Credentials.from_authorized_user_info(
+                    json.loads(token_json)
+                )
+            else:
+                token_file = os.getenv("GOOGLE_OAUTH_TOKEN")
 
-        return build(
-            "drive",
-            "v3",
-            credentials=credentials
-        )
+                credentials = Credentials.from_authorized_user_file(
+                    token_file
+                )
+
+            return build(
+                "drive",
+                "v3",
+                credentials=credentials
+            )
+
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                "GOOGLE_TOKEN_JSON contains invalid JSON."
+            ) from e
+
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "Google OAuth token file not found."
+            ) from e
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize Google Drive service: {e}"
+            ) from e
 
     @classmethod
     def upload_file(
