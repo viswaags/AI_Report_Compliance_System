@@ -26,21 +26,37 @@ class EmailService:
         msg["From"] = sender
         msg["To"] = ", ".join(recipients)
 
-        with smtplib.SMTP(
-            "smtp.gmail.com",
-            587
-        ) as server:
+        try:
+            with smtplib.SMTP(
+                "smtp.gmail.com",
+                587,
+                timeout=30
+            ) as server:
 
-            server.starttls()
+                print("Connecting to Gmail SMTP...")
 
-            server.login(
-                sender,
-                password
+                server.starttls()
+
+                print("TLS established.")
+
+                server.login(
+                    sender,
+                    password
+                )
+
+                print("Logged in successfully.")
+
+                server.sendmail(
+                    sender,
+                    recipients,
+                    msg.as_string()
+                )
+
+                print("Email sent successfully.")
+
+        except Exception as e:
+            print(
+                f"Email sending failed "
+                f"({type(e).__name__}): {e}"
             )
-
-            server.sendmail(
-                sender,
-                recipients,
-                msg.as_string()
-            )
-
+            raise
